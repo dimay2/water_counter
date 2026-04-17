@@ -1,0 +1,8 @@
+# Secrets and Environment variables
+.env
+
+# Images and Input Data
+*.jpeg
+*.jpg
+*.png
+Input_data/.env
