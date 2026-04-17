@@ -5,4 +5,7 @@
 *.jpeg
 *.jpg
 *.png
+
+# Allow pushing the Input_data folder contents
+!Input_data/**/*
 Input_data/.env
