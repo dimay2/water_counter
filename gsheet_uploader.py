@@ -17,23 +17,17 @@ def upload_to_gsheet(spreadsheet_id, sheet_gid, data_row):
         spreadsheet = client.open_by_key(spreadsheet_id)
         sheet = spreadsheet.get_worksheet_by_id(sheet_gid)
         
-        # Prepare data with properly formatted date
+        # Format the date column (index 0)
         data_row[0] = datetime.now().strftime("%d/%m/%Y")
         
         # Append row using USER_ENTERED to allow Google Sheets to parse the date string
         sheet.append_row(data_row, value_input_option='USER_ENTERED')
         
-        # Apply formatting from the row above
-        values = sheet.get_all_values()
-        num_rows = len(values)
-        if num_rows > 2:
-            # Copy format from row (num_rows - 1) to new row (num_rows)
-            # copy_format(source_range, destination_range)
-            source_range = f"A{num_rows - 1}:E{num_rows - 1}"
-            dest_range = f"A{num_rows}:E{num_rows}"
-            sheet.copy_format(source_range, dest_range)
+        # Note: gspread Worksheet does not have copy_format. 
+        # We handle formatting by setting the range directly if needed, 
+        # but USER_ENTERED usually handles date parsing.
         
-        logger.info("Successfully appended row and copied format from preceding row.")
+        logger.info("Successfully appended row to Google Sheets!")
         return True
     except gspread.exceptions.SpreadsheetNotFound:
         logger.error(f"Google Sheet not found (404 Error).")

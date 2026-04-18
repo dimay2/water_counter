@@ -96,6 +96,10 @@ def _call_gemini_with_retry(client, img, prompt, model_name):
         )
     )
 
+# Suppress verbose library logs
+logging.getLogger("google").setLevel(logging.WARNING)
+logging.getLogger("httpx").setLevel(logging.WARNING)
+
 def extract_numbers_from_meter(location: str, position: str, img_path: str) -> tuple[int, str]:
     if not os.path.exists(img_path):
         logger.error(f"Image not found: {img_path}")
@@ -110,6 +114,7 @@ def extract_numbers_from_meter(location: str, position: str, img_path: str) -> t
             entry.get("water_meter_position") == position and
             entry.get("last_update") == today_ymd):
             if not entry.get("refresh", False):
+                logger.info(f"Cache hit for {location} {position} meter. Using cached value: {entry.get('water_meter_value')}")
                 return entry.get('water_meter_value', 0), "Cached"
             else:
                 logger.info(f"Refresh requested for {location} {position} meter. Re-processing...")
@@ -120,7 +125,14 @@ def extract_numbers_from_meter(location: str, position: str, img_path: str) -> t
     try:
         client = genai.Client()
         img = Image.open(img_path)
-        prompt = f"Extract all digits from the {position} water meter in this image, including both the black and red background digits. Return it as meter_1 as string, preserving all leading zeros. If there are two meters, extract the one that corresponds to the {position} position."
+        # Refined prompt for two-meter images
+        meter_side = position.split('_')[1]
+        prompt = (
+            f"There are two water meters in this image: one on the left and one on the right. "
+            f"Focus ONLY on the {meter_side} water meter. "
+            f"Extract all visible digits (both black and red background). "
+            f"Return the result as meter_1 as a string, preserving all leading zeros."
+        )
         
         if _CACHED_MODELS_TO_TRY is None:
             _CACHED_MODELS_TO_TRY = load_cached_models()
