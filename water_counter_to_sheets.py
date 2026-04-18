@@ -1,8 +1,10 @@
 import os
 import logging
+import json
 from datetime import datetime
 from dotenv import load_dotenv
-from meter_extractor import extract_room_meters
+from google import genai
+from meter_extractor import extract_room_meters, process_location, load_ingestion_data
 from gsheet_uploader import update_or_append_gsheet
 
 # Load environment variables
@@ -21,11 +23,16 @@ BATHROOM_IMG = r'Input_data\Rumyantsevo\bacthroom.jpeg'
 def main():
     logger.info("--- Water Counter Processor (Vision-Based) ---")
     
+    # Initialize Gemini client once
+    client = genai.Client()
     location = "Rumyantsevo"
     
-    # Process Rooms
-    kitchen = extract_room_meters(location, "kitchen", KITCHEN_IMG)
-    bathroom = extract_room_meters(location, "bathroom", BATHROOM_IMG)
+    # Process PDF and Rooms
+    process_location(location, client)
+    ingestion_data = load_ingestion_data()
+    
+    kitchen = extract_room_meters(location, "kitchen", KITCHEN_IMG, client)
+    bathroom = extract_room_meters(location, "bathroom", BATHROOM_IMG, client)
 
     results = {
         "k_left": kitchen["left"],
@@ -36,7 +43,7 @@ def main():
 
     # Validation
     if any(val == 0 for val in results.values()):
-        logger.warning("Extraction failed (one or more values are 0).")
+        logger.warning("Meter extraction failed (one or more values are 0).")
 
     # Upload
     # Row A=Date, B=Kitchen Left, C=Kitchen Right, D=Bathroom Left, E=Bathroom Right
@@ -48,7 +55,7 @@ def main():
         results["b_right"]
     ]
     
-    update_or_append_gsheet(SPREADSHEET_ID, SHEET_GID, new_row)
+    update_or_append_gsheet(SPREADSHEET_ID, SHEET_GID, new_row, ingestion_data=ingestion_data)
 
 if __name__ == "__main__":
     main()

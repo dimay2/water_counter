@@ -6,12 +6,39 @@ from google import genai
 from google.genai import types
 from pydantic import BaseModel
 from tenacity import retry, wait_exponential, stop_after_attempt, retry_if_exception, RetryError
+from pdf_extractor import parse_rumyantsevo_pdf
 
 # Configure logging
 logger = logging.getLogger(__name__)
 
 MODELS_CACHE_FILE = 'working_models.json'
 DATA_INGESTION_FILE = 'data_for_ingestion.json'
+
+# ... existing code ...
+
+def process_location(location: str, client):
+    ingestion_data = load_ingestion_data()
+    
+    # Process PDF if it exists for this location
+    pdf_dir = os.path.join('Input_data', location)
+    if os.path.exists(pdf_dir):
+        # Check refresh flag for the location
+        loc_data = ingestion_data.setdefault(location, {})
+        if not loc_data.get("refresh_pdf", False):
+            logger.info(f"Skipping PDF parsing for {location} (refresh_pdf=False)")
+        else:
+            for filename in os.listdir(pdf_dir):
+                if filename.lower().endswith('.pdf'):
+                    pdf_path = os.path.join(pdf_dir, filename)
+                    logger.info(f"Processing PDF: {pdf_path}")
+                    pdf_data = parse_rumyantsevo_pdf(pdf_path, client)
+                    loc_data.update(pdf_data)
+                    # Reset refresh flag after processing
+                    loc_data["refresh_pdf"] = False
+                    save_ingestion_data(ingestion_data)
+                    logger.info(f"Updated ingestion data for {location} from {filename}")
+    
+    # ... existing meter processing logic ...
 
 # Suppress verbose library logs
 logging.getLogger("google").setLevel(logging.WARNING)
@@ -81,7 +108,7 @@ def _call_gemini_with_retry(client, img, prompt, model_name):
         )
     )
 
-def extract_room_meters(location: str, room: str, img_path: str) -> dict:
+def extract_room_meters(location: str, room: str, img_path: str, client) -> dict:
     if not os.path.exists(img_path):
         logger.error(f"Image not found: {img_path}")
         return {"left": 0, "right": 0}
@@ -99,7 +126,6 @@ def extract_room_meters(location: str, room: str, img_path: str) -> dict:
     if _CACHED_MODELS_TO_TRY is None:
         _CACHED_MODELS_TO_TRY = load_cached_models()
 
-    client = genai.Client()
     img = Image.open(img_path)
     prompt = "Extract both meters from image. Return as JSON: {'meter_1': 'left_value', 'meter_2': 'right_value'}."
     
