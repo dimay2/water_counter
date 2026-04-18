@@ -24,8 +24,8 @@ def update_or_append_gsheet(spreadsheet_id, sheet_gid, data_row):
         cell = sheet.find(today_date, in_column=1)
         if cell:
             logger.info(f"Updating existing row for {today_date}...")
-            # row index is cell.row, update columns A:E
-            sheet.update(range_name=f"A{cell.row}:E{cell.row}", values=[data_row])
+            # Use value_input_option='USER_ENTERED' to ensure proper date parsing without prepended quotes
+            sheet.update(range_name=f"A{cell.row}:E{cell.row}", values=[data_row], value_input_option='USER_ENTERED')
         else:
             logger.info(f"Appending new row for {today_date}...")
             sheet.append_row(data_row, value_input_option='USER_ENTERED')
