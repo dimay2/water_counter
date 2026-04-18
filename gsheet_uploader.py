@@ -17,20 +17,23 @@ def upload_to_gsheet(spreadsheet_id, sheet_gid, data_row):
         spreadsheet = client.open_by_key(spreadsheet_id)
         sheet = spreadsheet.get_worksheet_by_id(sheet_gid)
         
-        # Format the date column (index 0)
-        formatted_date = datetime.now().strftime("%d/%m/%Y")
-        data_row[0] = formatted_date
-
+        # Prepare data with properly formatted date
+        data_row[0] = datetime.now().strftime("%d/%m/%Y")
+        
+        # Append row using USER_ENTERED to allow Google Sheets to parse the date string
         sheet.append_row(data_row, value_input_option='USER_ENTERED')
         
-        # Try to apply format from the row above (if it exists)
-        all_values = sheet.get_all_values()
-        if len(all_values) > 1:
-            last_row_index = len(all_values)
-            # Copy format from the row above
-            sheet.format(f"A{last_row_index}", {'numberFormat': {'type': 'DATE', 'pattern': 'dd/mm/yyyy'}})
+        # Apply formatting from the row above
+        values = sheet.get_all_values()
+        num_rows = len(values)
+        if num_rows > 2:
+            # Copy format from row (num_rows - 1) to new row (num_rows)
+            # copy_format(source_range, destination_range)
+            source_range = f"A{num_rows - 1}:E{num_rows - 1}"
+            dest_range = f"A{num_rows}:E{num_rows}"
+            sheet.copy_format(source_range, dest_range)
         
-        logger.info("Successfully appended row to Google Sheets!")
+        logger.info("Successfully appended row and copied format from preceding row.")
         return True
     except gspread.exceptions.SpreadsheetNotFound:
         logger.error(f"Google Sheet not found (404 Error).")
