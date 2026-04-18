@@ -7,6 +7,7 @@ import random
 import traceback
 import json
 import logging
+from datetime import datetime
 from dotenv import load_dotenv
 from google import genai
 from google.genai import types
@@ -240,7 +241,8 @@ def main():
         spreadsheet = client.open_by_key(SPREADSHEET_ID)
         sheet = spreadsheet.get_worksheet_by_id(SHEET_GID)
 
-        new_row = ["", k_left, k_right, b_left, b_right]
+        today_date = datetime.now().strftime("%Y-%m-%d")
+        new_row = [today_date, k_left, k_right, b_left, b_right]
         sheet.append_row(new_row, value_input_option='RAW')
         logger.info("Successfully appended row to Google Sheets!")
         

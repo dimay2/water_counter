@@ -1,22 +1,31 @@
-# Water Counter
+# Water Counter Vision Extractor
 
-This application automates the process of reading water meter values from images using Google Gemini's Vision AI and uploads them to a Google Sheet. It's designed to provide a robust and efficient way to track water consumption by leveraging advanced OCR capabilities with fallback mechanisms.
+This project automates the reading of water meter values from local images using the Google Gemini Vision API and uploads the extracted data directly to a Google Sheet.
 
 ## Features
 
-- **Vision-Based Meter Reading:** Utilizes Google Gemini's `gemini-2.5-flash` model (with `gemini-1.5-flash` as a fallback) to accurately extract digits from water meter images.
-- **Image Processing:** Specifically designed to process images of both kitchen and bathroom water meters.
-- **Data Transformation:** Automatically processes extracted digits by dropping the three rightmost digits (typically representing decimal values) and removing leading zeros to get the main meter reading.
-- **Google Sheets Integration:** Authenticates with Google Sheets API using `gspread` and `google.auth` to upload processed meter readings to a specified spreadsheet.
-- **Robust Error Handling:** Implements exponential backoff and retry mechanisms for API calls to handle `503 Service Unavailable` errors, ensuring reliable operation.
-- **Detailed Logging:** Provides professional logging for tracking application flow, warnings, and errors.
+- **Intelligent Model Selection:** Dynamically finds and prioritizes working Gemini vision models to ensure high availability.
+- **Persistent Caching:** Remembers the last successful model in `working_models.json` to speed up subsequent runs and reduce unnecessary API listing calls.
+- **Robust Error Handling & Retries:** Uses exponential backoff (via `tenacity`) to automatically retry temporary `503 Server Errors` (waiting ~8s, 16s, and 32s between attempts).
+- **Rate Limit Compliance:** Introduces randomized delays (4-8 seconds) before API calls to strictly comply with Google AI Studio's requests-per-minute limitations.
+- **Data Transformation:** Automatically cleans extracted meter digits by dropping the three rightmost fractional digits and removing leading zeros.
+- **Google Sheets Integration:** Appends the final integer readings as a new row to a configured Google Sheet.
+- **Clean Logging:** Suppresses noisy REST API background logs while providing clear, professional tracking of the active model, retry attempts, and data output.
 
 ## How It Works
 
-1.  **Image Input:** The application takes pre-defined image paths for kitchen and bathroom water meters.
-2.  **OCR Extraction:** Each image is sent to the Google Gemini Vision API with a specific prompt to extract all digits from the meters.
-3.  **Data Cleaning:** The raw extracted digits are then cleaned: the last three digits are truncated, and any leading zeros are removed.
-4.  **Google Sheets Upload:** The final processed readings for both kitchen and bathroom meters are appended as a new row to a configured Google Sheet.
+### 1. Model Selection Algorithm
+To guarantee the script survives quota limits (`429`) and model deprecations (`404`), it uses a dynamic cascade strategy:
+- **Cache First:** The script loads known-working models from `working_models.json`.
+- **Fallback:** If cached models fail due to limits or errors, it fetches a fresh list of models directly from the Gemini API.
+- **Filter:** It dynamically excludes non-vision models (like `text`, `embedding`, `audio`, etc.).
+- **Promote:** Once a model succeeds, it gets promoted to the top of `working_models.json` so the script uses the fastest/most reliable model immediately on the next run.
+
+### 2. Processing Pipeline
+1. The chosen Gemini model extracts the exact strings seen on the meters (e.g., `000487016`).
+2. The script drops the last three red digits (`000487`).
+3. Leading zeros are stripped, leaving the exact integer reading (`487`).
+4. Readings for both the Bathroom and Kitchen, along with the **current date**, are formatted and uploaded securely to Google Sheets.
 
 ## Setup and Installation
 
@@ -24,12 +33,12 @@ This application automates the process of reading water meter values from images
 
 -   Python 3.x
 -   Google Cloud Project with the Gemini API enabled.
--   A Google Sheet configured for data upload.
--   Service account credentials (JSON file) for Google Sheets API authentication, or appropriate user authentication configured.
+-   Google Sheets API and Google Drive API enabled.
+-   Service account credentials (JSON file) mapped to the `GOOGLE_APPLICATION_CREDENTIALS` environment variable.
 
 ### Environment Variables
 
-Create a `.env` file in the project root with your Gemini API key:
+Create a `.env` file in the project root:
 
 ```
 GOOGLE_API_KEY=YOUR_GEMINI_API_KEY
@@ -37,7 +46,8 @@ GOOGLE_API_KEY=YOUR_GEMINI_API_KEY
 
 ### Google Sheets Configuration
 
-Ensure your Google Sheet is set up with the correct `SPREADSHEET_ID` and `SHEET_GID` in `water_counter_to_sheets.py`. Share the sheet with the service account email if using service account authentication.
+1. Ensure your Google Sheet is set up. The script defaults to specific IDs if the `.env` variables are missing.
+2. **Crucial:** You must share your target Google Sheet (Viewer or Editor access) with the `client_email` found inside your Service Account JSON file, otherwise the script will return a `404 Spreadsheet Not Found` error.
 
 ### Installation
 
@@ -46,30 +56,23 @@ Ensure your Google Sheet is set up with the correct `SPREADSHEET_ID` and `SHEET_
     git clone [repository_url]
     cd water_counter
     ```
-2.  Install dependencies:
+2.  Install required packages:
     ```bash
-    pip install -r requirements.txt
+    pip install google-generativeai gspread google-auth pydantic Pillow python-dotenv tenacity
     ```
 
 ## Usage
 
-To run the water counter and upload readings to Google Sheets:
+To run the extraction and upload pipeline:
 
 ```bash
 python water_counter_to_sheets.py
 ```
 
-Debug OCR extraction (without Google Sheets upload):
-
-```bash
-python debug_ocr.py
-```
-
 ## Project Structure
 
--   `extract_meters.py`: Core logic for extracting meter readings from images using Gemini.
--   `water_counter_to_sheets.py`: Main script to orchestrate meter extraction and upload data to Google Sheets.
--   `debug_ocr.py`: Utility script for debugging OCR extraction using OpenCV and PyTesseract.
+-   `water_counter_to_sheets.py`: Main script to orchestrate meter extraction using Gemini Vision and upload data to Google Sheets.
 -   `Input_data/`: Directory to store input images (e.g., `Rumyantsevo/kitchen.jpeg`, `Rumyantsevo/bacthroom.jpeg`).
+-   `working_models.json`: Automatically generated cache of working Gemini models.
 -   `README.md`: Project description and setup instructions.
--   `requirements.txt`: Python dependencies.
+-   `.env`: Configuration for API keys and Spreadsheet IDs.
