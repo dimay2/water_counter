@@ -1,11 +1,12 @@
-# Secrets and Environment variables
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Environment
 .env
 
-# Images and Input Data
-*.jpeg
-*.jpg
-*.png
-
-# Allow pushing the Input_data folder contents
-!Input_data/**/*
-Input_data/.env
+# Data
+data_for_ingestion.json
+working_models.json
