@@ -104,11 +104,16 @@ def extract_numbers_from_meter(location: str, position: str, img_path: str) -> t
     today_ymd = datetime.now().strftime("%Y%m%d")
     ingestion_data = load_ingestion_data()
     
+    # Check cache for existing data for this meter and today's date
     for entry in ingestion_data:
         if (entry.get("water_meter_location") == location and
             entry.get("water_meter_position") == position and
             entry.get("last_update") == today_ymd):
-            return entry.get("water_meter_value", 0), "Cached"
+            if not entry.get("refresh", False):
+                return entry.get('water_meter_value', 0), "Cached"
+            else:
+                logger.info(f"Refresh requested for {location} {position} meter. Re-processing...")
+                break
 
     global _CACHED_MODELS_TO_TRY
 

@@ -1,0 +1,30 @@
+[
+    {
+        "water_meter_location": "Rumyantsevo",
+        "water_meter_position": "kitchen_left",
+        "water_meter_value": 60,
+        "last_update": "20260418",
+        "refresh": false
+    },
+    {
+        "water_meter_location": "Rumyantsevo",
+        "water_meter_position": "kitchen_right",
+        "water_meter_value": 88,
+        "last_update": "20260418",
+        "refresh": true
+    },
+    {
+        "water_meter_location": "Rumyantsevo",
+        "water_meter_position": "bathroom_left",
+        "water_meter_value": 487,
+        "last_update": "20260418",
+        "refresh": false
+    },
+    {
+        "water_meter_location": "Rumyantsevo",
+        "water_meter_position": "bathroom_right",
+        "water_meter_value": 487,
+        "last_update": "20260418",
+        "refresh": false
+    }
+]
