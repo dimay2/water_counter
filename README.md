@@ -71,8 +71,11 @@ python water_counter_to_sheets.py
 
 ## Project Structure
 
--   `water_counter_to_sheets.py`: Main script to orchestrate meter extraction using Gemini Vision and upload data to Google Sheets.
+-   `water_counter_to_sheets.py`: Main entry point that orchestrates meter extraction and data upload.
+-   `meter_extractor.py`: Logic for extracting water meter values from images, including Gemini API interaction and result caching.
+-   `gsheet_uploader.py`: Logic for Google Sheets connectivity and data ingestion.
 -   `Input_data/`: Directory to store input images (e.g., `Rumyantsevo/kitchen.jpeg`, `Rumyantsevo/bacthroom.jpeg`).
 -   `working_models.json`: Automatically generated cache of working Gemini models.
+-   `data_for_ingestion.json`: Local cache storing processed meter readings to reduce redundant API calls.
 -   `README.md`: Project description and setup instructions.
 -   `.env`: Configuration for API keys and Spreadsheet IDs.
