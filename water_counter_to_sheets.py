@@ -2,8 +2,8 @@ import os
 import logging
 from datetime import datetime
 from dotenv import load_dotenv
-from meter_extractor import extract_numbers_from_meter
-from gsheet_uploader import upload_to_gsheet
+from meter_extractor import extract_room_meters
+from gsheet_uploader import update_or_append_gsheet
 
 # Load environment variables
 load_dotenv()
@@ -11,10 +11,6 @@ load_dotenv()
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
-
-# Suppress verbose INFO logs from underlying Google GenAI and HTTP libraries
-logging.getLogger("google.genai").setLevel(logging.WARNING)
-logging.getLogger("httpx").setLevel(logging.WARNING)
 
 # Constants
 SPREADSHEET_ID = os.getenv('SPREADSHEET_ID') or '127KX8icaYG03o5WVvnHWcXjxCxlR5s5lBMY4Gl1lSPY'
@@ -26,37 +22,33 @@ def main():
     logger.info("--- Water Counter Processor (Vision-Based) ---")
     
     location = "Rumyantsevo"
+    
+    # Process Rooms
+    kitchen = extract_room_meters(location, "kitchen", KITCHEN_IMG)
+    bathroom = extract_room_meters(location, "bathroom", BATHROOM_IMG)
 
-    # Extraction
-    meters = [
-        {"name": "kitchen_left", "path": KITCHEN_IMG},
-        {"name": "kitchen_right", "path": KITCHEN_IMG},
-        {"name": "bathroom_left", "path": BATHROOM_IMG},
-        {"name": "bathroom_right", "path": BATHROOM_IMG}
-    ]
-
-    results = {}
-    for meter in meters:
-        val, model = extract_numbers_from_meter(location, meter["name"], meter["path"])
-        results[meter["name"]] = {"val": val, "model": model}
-        logger.info(f"  {meter['name'].replace('_', ' ').title()}: {val} (via {model})")
+    results = {
+        "k_left": kitchen["left"],
+        "k_right": kitchen["right"],
+        "b_left": bathroom["left"],
+        "b_right": bathroom["right"]
+    }
 
     # Validation
-    if any(res["val"] == 0 for res in results.values()):
-        logger.warning("Extraction failed (one or more values are 0). Exiting.")
-        return
+    if any(val == 0 for val in results.values()):
+        logger.warning("Extraction failed (one or more values are 0).")
 
     # Upload
-    today_date = datetime.now().strftime("%Y-%m-%d")
+    # Row A=Date, B=Kitchen Left, C=Kitchen Right, D=Bathroom Left, E=Bathroom Right
     new_row = [
-        today_date, 
-        results["kitchen_left"]["val"], 
-        results["kitchen_right"]["val"], 
-        results["bathroom_left"]["val"], 
-        results["bathroom_right"]["val"]
+        "", 
+        results["k_left"], 
+        results["k_right"], 
+        results["b_left"], 
+        results["b_right"]
     ]
     
-    upload_to_gsheet(SPREADSHEET_ID, SHEET_GID, new_row)
+    update_or_append_gsheet(SPREADSHEET_ID, SHEET_GID, new_row)
 
 if __name__ == "__main__":
     main()

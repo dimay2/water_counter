@@ -1,9 +1,6 @@
 import os
 import json
 import logging
-from datetime import datetime
-import random
-import time
 from PIL import Image
 from google import genai
 from google.genai import types
@@ -15,6 +12,10 @@ logger = logging.getLogger(__name__)
 
 MODELS_CACHE_FILE = 'working_models.json'
 DATA_INGESTION_FILE = 'data_for_ingestion.json'
+
+# Suppress verbose library logs
+logging.getLogger("google").setLevel(logging.WARNING)
+logging.getLogger("httpx").setLevel(logging.WARNING)
 
 class MeterReadings(BaseModel):
     meter_1: str
@@ -44,41 +45,25 @@ def load_ingestion_data():
     if os.path.exists(DATA_INGESTION_FILE):
         try:
             with open(DATA_INGESTION_FILE, 'r') as f:
-                data = json.load(f)
-                if isinstance(data, list):
-                    return data
+                return json.load(f)
         except Exception as e:
             logger.warning(f"Could not read {DATA_INGESTION_FILE}: {e}")
-    return []
+    return {}
 
-def save_ingestion_data(data_list):
+def save_ingestion_data(data):
     try:
         with open(DATA_INGESTION_FILE, 'w') as f:
-            json.dump(data_list, f, indent=4)
+            json.dump(data, f, indent=4)
     except Exception as e:
         logger.warning(f"Could not write {DATA_INGESTION_FILE}: {e}")
 
 def get_api_vision_models(client):
     valid_model_names = [m.name.replace("models/", "") for m in client.models.list()]
-    preferred_order = [
-        'gemini-2.5-flash', 'gemini-2.5-pro', 'gemini-2.0-flash', 
-        'gemini-2.0-flash-lite', 'gemini-2.0-pro-exp'
-    ]
-    models_to_try = [m for m in preferred_order if m in valid_model_names]
-    excluded_keywords = ['embedding', 'aqa', 'text', '1.0', '1.5', 'tts', 'audio', 'imagen', 'veo', 'lyria', 'robotics', 'computer-use']
-    for m in valid_model_names:
-        if m.startswith('gemini-') and not any(kw in m for kw in excluded_keywords) and m not in models_to_try:
-            models_to_try.append(m)
-    return models_to_try
+    preferred_order = ['gemini-2.5-flash', 'gemini-2.5-pro', 'gemini-2.0-flash']
+    return [m for m in preferred_order if m in valid_model_names]
 
 def is_503_error(exception: Exception) -> bool:
     return "503" in str(exception) or "UNAVAILABLE" in str(exception)
-
-def is_429_error(exception: Exception) -> bool:
-    return "429" in str(exception) or "RESOURCE_EXHAUSTED" in str(exception)
-
-def is_404_error(exception: Exception) -> bool:
-    return "404" in str(exception) or "NOT_FOUND" in str(exception)
 
 @retry(
     wait=wait_exponential(multiplier=8, min=8, max=40),
@@ -96,98 +81,47 @@ def _call_gemini_with_retry(client, img, prompt, model_name):
         )
     )
 
-# Suppress verbose library logs
-logging.getLogger("google").setLevel(logging.WARNING)
-logging.getLogger("httpx").setLevel(logging.WARNING)
-
-def extract_numbers_from_meter(location: str, position: str, img_path: str) -> tuple[int, str]:
+def extract_room_meters(location: str, room: str, img_path: str) -> dict:
     if not os.path.exists(img_path):
         logger.error(f"Image not found: {img_path}")
-        return 0, ""
+        return {"left": 0, "right": 0}
 
-    today_ymd = datetime.now().strftime("%Y%m%d")
     ingestion_data = load_ingestion_data()
+    room_data = ingestion_data.get(location, {}).get(room, {})
     
-    # Check cache for existing data for this meter and today's date
-    for entry in ingestion_data:
-        if (entry.get("water_meter_location") == location and
-            entry.get("water_meter_position") == position and
-            entry.get("last_update") == today_ymd):
-            if not entry.get("refresh", False):
-                logger.info(f"Cache hit for {location} {position} meter. Using cached value: {entry.get('water_meter_value')}")
-                return entry.get('water_meter_value', 0), "Cached"
-            else:
-                logger.info(f"Refresh requested for {location} {position} meter. Re-processing...")
-                break
+    if room_data and not room_data.get("refresh", False):
+        logger.info(f"Cache hit for {location}.{room}. Using cached values.")
+        return {"left": room_data.get("left", 0), "right": room_data.get("right", 0)}
 
+    logger.info(f"Processing {location} {room} meters...")
+    
     global _CACHED_MODELS_TO_TRY
+    if _CACHED_MODELS_TO_TRY is None:
+        _CACHED_MODELS_TO_TRY = load_cached_models()
 
+    client = genai.Client()
+    img = Image.open(img_path)
+    prompt = "Extract both meters from image. Return as JSON: {'meter_1': 'left_value', 'meter_2': 'right_value'}."
+    
     try:
-        client = genai.Client()
-        img = Image.open(img_path)
-        # Refined prompt for two-meter images
-        meter_side = position.split('_')[1]
-        prompt = (
-            f"There are two water meters in this image: one on the left and one on the right. "
-            f"Focus ONLY on the {meter_side} water meter. "
-            f"Extract all visible digits (both black and red background). "
-            f"Return the result as meter_1 as a string, preserving all leading zeros."
-        )
+        response = _call_gemini_with_retry(client, img, prompt, _CACHED_MODELS_TO_TRY[0])
+        data = json.loads(response.text)
         
-        if _CACHED_MODELS_TO_TRY is None:
-            _CACHED_MODELS_TO_TRY = load_cached_models()
+        def parse(val):
+            digits = "".join(filter(str.isdigit, val))
+            return int(digits[:-3]) if len(digits) > 3 else 0
 
-        if not _CACHED_MODELS_TO_TRY:
-            _CACHED_MODELS_TO_TRY = get_api_vision_models(client)
-
-        def process_meter_string(m_str):
-            if not m_str: return 0
-            digits = "".join(filter(str.isdigit, str(m_str)))
-            if len(digits) <= 3: return 0
-            digits = digits[:-3]
-            digits = digits.lstrip('0')
-            return int(digits) if digits else 0
-
-        while True:
-            models_to_iterate = list(_CACHED_MODELS_TO_TRY)
-            for model_name in models_to_iterate:
-                time.sleep(random.uniform(4.0, 8.0))
-                try:
-                    response = _call_gemini_with_retry(client, img, prompt, model_name)
-                    data = json.loads(response.text)
-                    meter_value = process_meter_string(data.get("meter_1", ""))
-
-                    new_entry = {
-                        "water_meter_location": location,
-                        "water_meter_position": position,
-                        "water_meter_value": meter_value,
-                        "last_update": today_ymd
-                    }
-                    found = False
-                    for idx, entry in enumerate(ingestion_data):
-                        if entry.get("water_meter_location") == location and entry.get("water_meter_position") == position:
-                            ingestion_data[idx] = new_entry
-                            found = True
-                            break
-                    if not found:
-                        ingestion_data.append(new_entry)
-                    save_ingestion_data(ingestion_data)
-
-                    if model_name in _CACHED_MODELS_TO_TRY:
-                        _CACHED_MODELS_TO_TRY.remove(model_name)
-                    _CACHED_MODELS_TO_TRY.insert(0, model_name)
-                    save_cached_models(_CACHED_MODELS_TO_TRY)
-                    
-                    return meter_value, model_name
-                except Exception as e:
-                    if is_429_error(e) or is_404_error(e):
-                        continue
-                    else:
-                        if model_name in _CACHED_MODELS_TO_TRY:
-                            _CACHED_MODELS_TO_TRY.remove(model_name)
-                            save_cached_models(_CACHED_MODELS_TO_TRY)
-            break
-        return 0, ""
+        left = parse(data.get("meter_1", "0"))
+        right = parse(data.get("meter_2", "0"))
+        
+        # Save to cache
+        ingestion_data.setdefault(location, {})[room] = {
+            "refresh": False,
+            "left": left,
+            "right": right
+        }
+        save_ingestion_data(ingestion_data)
+        return {"left": left, "right": right}
     except Exception as e:
-        logger.error(f"Error in extract_numbers_from_meter: {e}")
-        return 0, ""
+        logger.error(f"Error extracting {room}: {e}")
+        return {"left": 0, "right": 0}
