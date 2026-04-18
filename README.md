@@ -22,7 +22,8 @@ This project automates the reading of water meter values from local images using
 3. **Data Ingestion:**
    - Extracted values (e.g., "Содержание и техническое обслуживание помещений") are cleaned and stored in `data_for_ingestion.json`.
    - Data is uploaded to Google Sheets columns H through P.
-   - Columns Q and R are automatically populated with values/formulas from the previous row.
+   - Column Q retains the previous row's value.
+   - Column R is dynamically populated with a SUM formula (`=SUM(H{row}:Q{row})`) to summarize all columns in the current row.
 
 ## Setup and Installation
 
