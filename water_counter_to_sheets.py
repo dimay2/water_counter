@@ -43,15 +43,15 @@ def main():
                 prev_right = int(prev_readings[6]) if prev_readings and len(prev_readings) > 6 and prev_readings[6].isdigit() else 0
                 
                 # Determine if we need to refresh before the loop to avoid cache hits skipping images
-                room_data = ingestion_data.get(location, {}).get("all", {})
+                room_data_from_ingestion = ingestion_data.get(location, {}).get("all", {})
                 today = datetime.now().strftime("%Y%m%d")
-                force_refresh = room_data.get("refresh", False) or room_data.get("date") != today
+                force_refresh = room_data_from_ingestion.get("refresh", False) or room_data_from_ingestion.get("date") != today
 
                 final_left, final_right = 0, 0
                 # Process all images
                 for img_file in img_files:
                     logger.info(f"Processing meter image: {img_file}")
-                    # Color coded logic in extract_room_meters handles Red=Left, Blue=Right
+                    # Color coded logic in extract_room_meters handles Red=Left, Blue=Right, and does not save to ingestion_data
                     res = extract_room_meters(location, "all", img_file, client, logic="color_coded", 
                                            prev_val_left=prev_left, prev_val_right=prev_right,
                                            use_cache=not force_refresh)
@@ -60,14 +60,28 @@ def main():
                     final_right += res["right"]
                 
                 results_list = [final_left, final_right]
-                
-                # Check if we got zeros
-                if results_list[0] == 0 and results_list[1] == 0:
-                    logger.warning(f"Detected 0 values for {location}. Setting refresh=true.")
-                    ingestion_data = load_ingestion_data()
-                    if "all" in ingestion_data.get(location, {}):
-                        ingestion_data[location]["all"]["refresh"] = True
-                        save_ingestion_data(ingestion_data)
+
+                # After processing all images, update ingestion_data for Tashkentskiy.all
+                loc_data = ingestion_data.setdefault(location, {})
+                room_data = loc_data.setdefault("all", {})
+                room_data.update({
+                    "date": today,
+                    "refresh": False, # Assuming successful extraction means no refresh needed now
+                    "left": final_left,
+                    "right": final_right,
+                    "prev_left": prev_left,
+                    "prev_right": prev_right
+                })
+                save_ingestion_data(ingestion_data)
+
+                # Check if we got zeros (this check is now redundant since extract_room_meters will raise an error if validation fails)
+                # if results_list[0] == 0 and results_list[1] == 0:
+                #     logger.warning(f"Detected 0 values for {location}. Setting refresh=true.")
+                #     ingestion_data = load_ingestion_data()
+                #     if "all" in ingestion_data.get(location, {}):
+                #         ingestion_data[location]["all"]["refresh"] = True
+                #         save_ingestion_data(ingestion_data)
+
             else:
                 # Rumyantsevo: B=1 (K_L), C=2 (K_R), D=3 (B_L), E=4 (B_R)
                 pk_l = int(prev_readings[1]) if prev_readings and len(prev_readings) > 1 and prev_readings[1].isdigit() else 0
