@@ -4,8 +4,8 @@ import json
 from datetime import datetime
 from dotenv import load_dotenv
 from google import genai
-from meter_extractor import extract_room_meters, process_location, load_ingestion_data
-from gsheet_uploader import update_or_append_gsheet
+from meter_extractor import extract_room_meters, process_location, load_ingestion_data, save_ingestion_data
+from gsheet_uploader import update_or_append_gsheet, get_last_readings
 
 # Load environment variables
 load_dotenv()
@@ -14,48 +14,88 @@ load_dotenv()
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
-# Constants
-SPREADSHEET_ID = os.getenv('SPREADSHEET_ID') or '127KX8icaYG03o5WVvnHWcXjxCxlR5s5lBMY4Gl1lSPY'
-SHEET_GID = int(os.getenv('SHEET_GID') if os.getenv('SHEET_GID') else 455004741)
-KITCHEN_IMG = r'Input_data\Rumyantsevo\kitchen.jpeg'
-BATHROOM_IMG = r'Input_data\Rumyantsevo\bacthroom.jpeg'
-
 def main():
     logger.info("--- Water Counter Processor (Vision-Based) ---")
-    
-    # Initialize Gemini client once
     client = genai.Client()
-    location = "Rumyantsevo"
     
-    # Process PDF and Rooms
-    process_location(location, client)
-    ingestion_data = load_ingestion_data()
-    
-    kitchen = extract_room_meters(location, "kitchen", KITCHEN_IMG, client)
-    bathroom = extract_room_meters(location, "bathroom", BATHROOM_IMG, client)
+    with open('profiles.json', 'r', encoding='utf-8') as f:
+        profiles = json.load(f)
+        
+    for location, profile in profiles.items():
+        logger.info(f"--- Processing Location: {location} ---")
+        
+        # 1. Process PDF
+        process_location(location, client, profiles)
+        ingestion_data = load_ingestion_data()
+        
+        # Get last readings from GSheet for validation
+        prev_readings = get_last_readings(profile["spreadsheet_id"], profile["sheet_gid"])
+        
+        # 2. Extract Meters
+        img_dir = os.path.join('Input_data', location)
+        img_files = [os.path.join(img_dir, f) for f in os.listdir(img_dir) if f.lower().endswith(('.jpeg', '.jpg', '.png'))]
+        
+        results_list = []
+        try:
+            if profile["meter_logic"] == "color_coded":
+                # For Tashkentskiy: F=5 (Red/Left), G=6 (Blue/Right)
+                prev_left = int(prev_readings[5]) if prev_readings and len(prev_readings) > 5 and prev_readings[5].isdigit() else 0
+                prev_right = int(prev_readings[6]) if prev_readings and len(prev_readings) > 6 and prev_readings[6].isdigit() else 0
+                
+                # Determine if we need to refresh before the loop to avoid cache hits skipping images
+                room_data = ingestion_data.get(location, {}).get("all", {})
+                today = datetime.now().strftime("%Y%m%d")
+                force_refresh = room_data.get("refresh", False) or room_data.get("date") != today
 
-    results = {
-        "k_left": kitchen["left"],
-        "k_right": kitchen["right"],
-        "b_left": bathroom["left"],
-        "b_right": bathroom["right"]
-    }
+                final_left, final_right = 0, 0
+                # Process all images
+                for img_file in img_files:
+                    logger.info(f"Processing meter image: {img_file}")
+                    # Color coded logic in extract_room_meters handles Red=Left, Blue=Right
+                    res = extract_room_meters(location, "all", img_file, client, logic="color_coded", 
+                                           prev_val_left=prev_left, prev_val_right=prev_right,
+                                           use_cache=not force_refresh)
+                    logger.info(f"Extracted from {img_file}: {res}")
+                    final_left += res["left"]
+                    final_right += res["right"]
+                
+                results_list = [final_left, final_right]
+                
+                # Check if we got zeros
+                if results_list[0] == 0 and results_list[1] == 0:
+                    logger.warning(f"Detected 0 values for {location}. Setting refresh=true.")
+                    ingestion_data = load_ingestion_data()
+                    if "all" in ingestion_data.get(location, {}):
+                        ingestion_data[location]["all"]["refresh"] = True
+                        save_ingestion_data(ingestion_data)
+            else:
+                # Rumyantsevo: B=1 (K_L), C=2 (K_R), D=3 (B_L), E=4 (B_R)
+                pk_l = int(prev_readings[1]) if prev_readings and len(prev_readings) > 1 and prev_readings[1].isdigit() else 0
+                pk_r = int(prev_readings[2]) if prev_readings and len(prev_readings) > 2 and prev_readings[2].isdigit() else 0
+                pb_l = int(prev_readings[3]) if prev_readings and len(prev_readings) > 3 and prev_readings[3].isdigit() else 0
+                pb_r = int(prev_readings[4]) if prev_readings and len(prev_readings) > 4 and prev_readings[4].isdigit() else 0
 
-    # Validation
-    if any(val == 0 for val in results.values()):
-        logger.warning("Meter extraction failed (one or more values are 0).")
+                k_img = os.path.join(img_dir, "kitchen.jpeg")
+                b_img = os.path.join(img_dir, "bacthroom.jpeg")
+                
+                kitchen = extract_room_meters(location, "kitchen", k_img, client, prev_val_left=pk_l, prev_val_right=pk_r)
+                bathroom = extract_room_meters(location, "bathroom", b_img, client, prev_val_left=pb_l, prev_val_right=pb_r)
+                results_list = [kitchen["left"], kitchen["right"], bathroom["left"], bathroom["right"]]
 
-    # Upload
-    # Row A=Date, B=Kitchen Left, C=Kitchen Right, D=Bathroom Left, E=Bathroom Right
-    new_row = [
-        "", 
-        results["k_left"], 
-        results["k_right"], 
-        results["b_left"], 
-        results["b_right"]
-    ]
-    
-    update_or_append_gsheet(SPREADSHEET_ID, SHEET_GID, new_row, ingestion_data=ingestion_data)
+            # 3. Upload
+            update_or_append_gsheet(
+                profile["spreadsheet_id"], 
+                profile["sheet_gid"], 
+                location, 
+                profile, 
+                results_list, 
+                ingestion_data=ingestion_data
+            )
+        except ValueError as ve:
+            logger.error(f"Stopping processing for {location} due to validation error: {ve}")
+            continue # Skip to next location
+
+        logger.info(f"Processing complete for {location}")
 
 if __name__ == "__main__":
     main()
