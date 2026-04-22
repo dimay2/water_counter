@@ -5,25 +5,29 @@ This project automates the reading of water meter values from local images using
 ## Features
 
 - **Intelligent Model Selection:** Dynamically finds and prioritizes working Gemini vision models to ensure high availability.
-- **PDF Invoice Parsing:** Automatically parses "Rumyantsevo" location PDF invoices using Gemini Vision, extracting service-specific charges into a structured format.
+- **PDF Invoice Parsing:** Automatically parses location-specific PDF invoices using Gemini Vision, extracting service-specific charges into a structured format.
 - **Persistent Caching:** Remembers the last successful model in `working_models.json` and manages extraction status via `data_for_ingestion.json`.
 - **Robust Error Handling & Retries:** Uses exponential backoff (via `tenacity`) to automatically retry temporary `503 Server Errors`.
-- **Data Transformation:** 
-    - Automatically cleans extracted meter digits by dropping the three rightmost fractional digits and removing leading zeros.
-    - Cleans service charge currency values from PDFs by removing digits after the comma.
+- **Data Transformation & Validation:** 
+    - **Deterministic Parsing:** Automatically cleans extracted meter digits by dropping the three rightmost fractional digits and removing leading zeros.
+    - **Reading Validation:** Compares current readings with previous values from Google Sheets; raises an error if the consumption exceeds 20 units to prevent faulty extractions.
+    - **Service Charge Cleaning:** Cleans service charge currency values from PDFs by removing digits after the comma.
+- **Color-Coded Meter Logic:** Specifically designed to handle locations like "Tashkentskiy" where meters are identified by color (Red for Left/Hot, Blue for Right/Cold). The system ensures that cached readings are only considered complete if both red and blue meter readings are successfully populated for the day.
 - **Google Sheets Integration:** Appends combined meter readings and service charges as a new row to a configured Google Sheet.
-- **Clean Logging:** Provides clear tracking of the active model, retry attempts, and data output for both meters and PDF fields.
+- **Clean Logging:** Provides clear tracking of the active model, extraction results, validation checks, and data upload status.
 
 ## How It Works
 
 ### 1. Processing Pipeline
-1. **Meter Extraction:** The Gemini model extracts the exact strings seen on the water meters, which are then cleaned and formatted.
-2. **PDF Parsing:** The system scans `Input_data/Rumyantsevo/` for PDF invoices. Gemini Vision parses the table rows for "Виды услуг" and "Всего начисл." (column 9).
-3. **Data Ingestion:**
-   - Extracted values (e.g., "Содержание и техническое обслуживание помещений") are cleaned and stored in `data_for_ingestion.json`.
-   - Data is uploaded to Google Sheets columns H through P.
-   - Column Q retains the previous row's value.
-   - Column R is dynamically populated with a SUM formula (`=SUM(H{row}:Q{row})`) to summarize all columns in the current row.
+1. **Meter Extraction:** 
+   - For standard locations (e.g., Rumyantsevo), it extracts both meters from single images (kitchen, bathroom).
+   - For color-coded locations (e.g., Tashkentskiy), it identifies the meter color and reading from individual images and combines them.
+2. **Validation:** Before saving, the system fetches the last row from Google Sheets. If the new reading is more than 20 units higher than the previous one, it raises a validation error and stops processing for that location.
+3. **PDF Parsing:** The system scans for PDF invoices in location-specific directories. Gemini Vision parses the utility charges into structured data.
+4. **Data Ingestion:**
+   - Extracted values are cleaned and stored in `data_for_ingestion.json`.
+   - Data is uploaded to specific columns in Google Sheets based on the location profile.
+   - Summarization formulas are dynamically applied where configured.
 
 ## Setup and Installation
 
@@ -44,7 +48,7 @@ GOOGLE_API_KEY=YOUR_GEMINI_API_KEY
 
 ### Google Sheets Configuration
 
-1. Ensure your Google Sheet is set up. The script defaults to specific IDs if the `.env` variables are missing.
+1. Profiles and column mappings are defined in `profiles.json`.
 2. **Crucial:** You must share your target Google Sheet (Viewer or Editor access) with the `client_email` found inside your Service Account JSON file.
 
 ### Installation
@@ -56,7 +60,7 @@ GOOGLE_API_KEY=YOUR_GEMINI_API_KEY
     ```
 2.  Install required packages:
     ```bash
-    pip install google-generativeai gspread google-auth pydantic Pillow python-dotenv tenacity pdfplumber
+    pip install google-generativeai gspread google-auth pydantic Pillow python-dotenv tenacity
     ```
 
 ## Usage
