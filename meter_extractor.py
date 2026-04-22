@@ -59,7 +59,11 @@ def process_location(location: str, client, profiles):
         loc_data = ingestion_data.setdefault(location, {})
         
         # Force re-processing if no utility charges found in data
-        if not any(key in loc_data for key in ["ХВС КПУ", "ГВС КПУ", "Водоотв. КПУ"]):
+        required_keys = ["ХВС КПУ", "ГВС КПУ", "Водоотв. КПУ"]
+        if location == "Tashkentskiy":
+             required_keys = ["ХВС КПУ", "ГВС КПУ", "Водоотв. КПУ", "Отоп.эн.пл.", "Сод.жил.пом. и обращение с ТКО*", "Запирающее устройство", "Газ"]
+        
+        if not all(key in loc_data for key in required_keys):
             loc_data["refresh_pdf"] = True
 
         if loc_data.get("refresh_pdf") is not True:
@@ -84,7 +88,10 @@ def process_location(location: str, client, profiles):
                         else:
                             loc_data.update(pdf_data)
                         
-                        loc_data["refresh_pdf"] = False
+                        # Only set refresh_pdf to False if all keys are present
+                        if all(key in loc_data for key in required_keys):
+                            loc_data["refresh_pdf"] = False
+                        
                         save_ingestion_data(ingestion_data)
                         logger.info(f"Updated {location} from {filename}")
                         logger.info(f"Parsed values from {filename} for {location}: {pdf_data}")
