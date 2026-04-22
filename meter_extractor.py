@@ -138,6 +138,7 @@ Follow these high-precision steps:
     - If a digit is partially hidden or trimmed (e.g., up to 10% of the height is cut off at the top or bottom), identify it by its remaining shape.
 3. **Mechanical Rollover Check:** If a wheel is between two numbers (e.g., between 9 and 0), choose the digit that has the largest vertical surface area visible.
 4. **Context Clue:** The user expects the first two digits to be '01'. Look closely at the first two white boxes to verify if they are '01'.
+5. **Color Detection:** Determine if the dominant indicator is "Red" or "Blue".
 
 Output ONLY a JSON object in this format:
 {{
@@ -145,6 +146,7 @@ Output ONLY a JSON object in this format:
   "full_reading": "8-digit string",
   "cubic_meters": "5-digit string",
   "liters": "3-digit string",
+  "color": "Red/Blue",
   "confidence_score": 0.0-1.0
 }}
 
