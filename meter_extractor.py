@@ -122,19 +122,27 @@ def extract_room_meters(location: str, room: str, img_path: str, client, logic="
     img = Image.open(img_path)
     
     if logic == "color_coded":
-        prompt = f"""You are an expert data extraction assistant. Please analyze the provided image of a water meter and extract the necessary reading details.
+        prompt = f"""Analyze this water meter image and extract the 8-digit reading. 
+Follow these high-precision steps:
 
-        Strictly adhere to the following extraction rules:
-        1. "color": Determine if the prominent stripe and indicator needle on the meter dial are "Red" or "Blue".
-        2. "reading": Extract the counter reading as a full string of digits, including leading zeros and all fractional digits (e.g., "00123.456" or "0001099,451").
-           - Crucial: DO NOT return the meter serial number.
-           - Ensure you extract digits clearly.
+1. **Contrast Enhancement:** Mentally increase the image contrast to distinguish the black numbers from the white/red backgrounds. 
+2. **Handle Geometric Distortions:** The photo may be at an angle. For each of the 5 white boxes (cubic meters) and 3 red boxes (liters):
+    - Identify the most dominant digit.
+    - If a digit is partially hidden or trimmed (e.g., up to 10% of the height is cut off at the top or bottom), identify it by its remaining shape.
+3. **Mechanical Rollover Check:** If a wheel is between two numbers (e.g., between 9 and 0), choose the digit that has the largest vertical surface area visible.
+4. **Context Clue:** The user expects the first two digits to be '01'. Look closely at the first two white boxes to verify if they are '01'.
 
-        Context:
-        - Previous reading for this meter was: {prev_val_left if prev_val_left > 0 else prev_val_right}.
-        - Ensure the extracted value is reasonable.
+Output ONLY a JSON object in this format:
+{{
+  "serial_number": "string",
+  "full_reading": "8-digit string",
+  "cubic_meters": "5-digit string",
+  "liters": "3-digit string",
+  "confidence_score": 0.0-1.0
+}}
 
-        Return the extracted data strictly as a valid JSON object using only the keys: "color" and "reading". Do not wrap the JSON in markdown blocks or include any other conversational text."""
+Context:
+- Previous reading for this meter was: {prev_val_left if prev_val_left > 0 else prev_val_right}."""
     else:
         prompt = f"""Extract both water meters from the image.
         Return as JSON: {{"meter_1": "left_full_reading", "meter_2": "right_full_reading"}}
