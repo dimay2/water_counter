@@ -197,9 +197,7 @@ def extract_room_meters(location: str, room: str, img_path: str, client, logic="
                 raise ValueError(f"Validation failed for {location}.{room} (Right): New={right}, Previous={prev_val_right}. Delta > 20.")
 
         # Determine refresh status
-        should_refresh = False
-        if left == 0 and right == 0:
-            should_refresh = True
+        should_refresh = not (left > 0 and right > 0)
 
         # Update cache (don't overwrite other fields)
         loc_data = ingestion_data.setdefault(location, {})
