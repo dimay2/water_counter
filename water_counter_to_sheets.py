@@ -66,7 +66,7 @@ def main():
                 room_data = loc_data.setdefault("all", {})
                 room_data.update({
                     "date": today,
-                    "refresh": False, # Assuming successful extraction means no refresh needed now
+                    "refresh": not (final_left > 0 and final_right > 0),
                     "left": final_left,
                     "right": final_right,
                     "prev_left": prev_left,
