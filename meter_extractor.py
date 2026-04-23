@@ -129,15 +129,13 @@ def extract_room_meters(location: str, room: str, img_path: str, client, logic="
     img = Image.open(img_path)
     
     if logic == "color_coded":
-        prompt = f"""Analyze the provided water meter image. Your goal is to extract the EXACT 8-digit reading shown on the counter, which includes leading zeros (e.g., '01099451' or '00979904').
+        prompt = f"""Analyze the provided water meter image and extract the EXACT 8-digit reading. The reading consists of 5 black digits (cubic meters) and 3 red digits (liters).
 
-Follow these instructions for high-precision extraction:
-1. **Identify Meter:** The meter will be clearly identifiable by its color (Red or Blue). 
-2. **Full Reading Extraction:** Read all 8 digits displayed on the counter dial. You MUST include leading zeros.
-   - Example 1: If the dial shows '01099451', output '01099451'.
-   - Example 2: If the dial shows '00979904', output '00979904'.
-3. **Contrast & Distortion:** The photo may be at an angle or low contrast. Look past distortions and reflections to identify each digit clearly.
-4. **Mechanical Rollover Check:** If a wheel is between two numbers (e.g., 9 and 0), select the digit with the largest visible vertical surface area.
+Follow these high-precision rules:
+1. **Full Reading:** Extract ALL 8 digits together as one string.
+2. **Padding:** You MUST include ALL leading zeros. For example, if the counter shows 01099 and 451, the reading is 01099451. If it shows 00979 and 904, the reading is 00979904.
+3. **Red Meter Check:** Specifically for the Red meter, ensure you read the 5 cubic meter digits correctly. For example, '01099' is 1099 cubic meters, not 99. Do not truncate leading zeros in the cubic meter part.
+4. **Distinctions:** Identify the color (Red or Blue) based on the dial color.
 
 Output ONLY a JSON object in this format:
 {{
@@ -150,10 +148,9 @@ Output ONLY a JSON object in this format:
 }}
 
 Context:
-- The user has annotated the expected readings for Tashkentskiy as: 
-    - Red meter: '01099451'
-    - Blue meter: '00979904'
-- Your task is to confirm if the current image matches these or extract the actual current reading."""
+- Annotated target Red meter: 01099451 (Expect 1099 cubic meters)
+- Annotated target Blue meter: 00979904 (Expect 979 cubic meters)
+- Your output MUST match the 8-digit full reading logic."""
     else:
         prompt = f"""Extract both water meters from the image.
         Return as JSON: {{"meter_1": "left_full_reading", "meter_2": "right_full_reading"}}
