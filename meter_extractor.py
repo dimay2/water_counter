@@ -231,6 +231,8 @@ Context:
             "prev_right": prev_val_right
         })
         # For color coded, we only update the side we found
+        room_data.setdefault("left", 0)
+        room_data.setdefault("right", 0)
         if logic == "color_coded":
             if color == "Red":
                 room_data["left"] = left
