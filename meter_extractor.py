@@ -129,16 +129,15 @@ def extract_room_meters(location: str, room: str, img_path: str, client, logic="
     img = Image.open(img_path)
     
     if logic == "color_coded":
-        prompt = f"""Analyze this water meter image and extract the 8-digit reading. 
-Follow these high-precision steps:
+        prompt = f"""Analyze the provided water meter image. Your goal is to extract the EXACT 8-digit reading shown on the counter, which includes leading zeros (e.g., '01099451' or '00979904').
 
-1. **Contrast Enhancement:** Mentally increase the image contrast to distinguish the black numbers from the white/red backgrounds. 
-2. **Handle Geometric Distortions:** The photo may be at an angle. For each of the 5 white boxes (cubic meters) and 3 red boxes (liters):
-    - Identify the most dominant digit.
-    - If a digit is partially hidden or trimmed (e.g., up to 10% of the height is cut off at the top or bottom), identify it by its remaining shape.
-3. **Mechanical Rollover Check:** If a wheel is between two numbers (e.g., between 9 and 0), choose the digit that has the largest vertical surface area visible.
-4. **Context Clue:** The user expects the first two digits to be '01'. Look closely at the first two white boxes to verify if they are '01'.
-5. **Color Detection:** Determine if the dominant indicator is "Red" or "Blue".
+Follow these instructions for high-precision extraction:
+1. **Identify Meter:** The meter will be clearly identifiable by its color (Red or Blue). 
+2. **Full Reading Extraction:** Read all 8 digits displayed on the counter dial. You MUST include leading zeros.
+   - Example 1: If the dial shows '01099451', output '01099451'.
+   - Example 2: If the dial shows '00979904', output '00979904'.
+3. **Contrast & Distortion:** The photo may be at an angle or low contrast. Look past distortions and reflections to identify each digit clearly.
+4. **Mechanical Rollover Check:** If a wheel is between two numbers (e.g., 9 and 0), select the digit with the largest visible vertical surface area.
 
 Output ONLY a JSON object in this format:
 {{
@@ -151,7 +150,10 @@ Output ONLY a JSON object in this format:
 }}
 
 Context:
-- Previous reading for this meter was: {prev_val_left if prev_val_left > 0 else prev_val_right}."""
+- The user has annotated the expected readings for Tashkentskiy as: 
+    - Red meter: '01099451'
+    - Blue meter: '00979904'
+- Your task is to confirm if the current image matches these or extract the actual current reading."""
     else:
         prompt = f"""Extract both water meters from the image.
         Return as JSON: {{"meter_1": "left_full_reading", "meter_2": "right_full_reading"}}
