@@ -45,7 +45,8 @@ def main():
                 # Determine if we need to refresh before the loop to avoid cache hits skipping images
                 room_data_from_ingestion = ingestion_data.get(location, {}).get("all", {})
                 today = datetime.now().strftime("%Y%m%d")
-                force_refresh = room_data_from_ingestion.get("refresh", False) or room_data_from_ingestion.get("date") != today
+                # Force refresh for Tashkentskiy
+                force_refresh = True
 
                 final_left, final_right = 0, 0
                 # Process all images
