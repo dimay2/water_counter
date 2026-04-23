@@ -129,13 +129,14 @@ def extract_room_meters(location: str, room: str, img_path: str, client, logic="
     img = Image.open(img_path)
     
     if logic == "color_coded":
-        prompt = f"""Analyze the provided water meter image and extract the EXACT 8-digit reading. The reading consists of 5 black digits (cubic meters) and 3 red digits (liters).
+        prompt = f"""Analyze the provided water meter image. Your goal is to extract the EXACT 8-digit reading. The reading consists of 5 black digits (cubic meters) and 3 red digits (liters).
 
 Follow these high-precision rules:
 1. **Full Reading:** Extract ALL 8 digits together as one string.
-2. **Padding:** You MUST include ALL leading zeros. For example, if the counter shows 01099 and 451, the reading is 01099451. If it shows 00979 and 904, the reading is 00979904.
-3. **Red Meter Check:** Specifically for the Red meter, ensure you read the 5 cubic meter digits correctly. For example, '01099' is 1099 cubic meters, not 99. Do not truncate leading zeros in the cubic meter part.
-4. **Distinctions:** Identify the color (Red or Blue) based on the dial color.
+2. **Leading Zeros (CRITICAL):** Do not ignore leading zeros in the cubic meter section. For the Red meter, the reading starts with '01'. The first two digits MUST be '01'.
+3. **Red Meter Specifics:** Read the 5 cubic meter digits as a full 5-digit number. For example, '01099' is 1099 cubic meters. Do not truncate the '01' leading digits. 
+4. **Blue Meter Specifics:** For the Blue meter, ensure you read '00979' correctly as 979 cubic meters.
+5. **Color Detection:** Confirm if the dial is Red or Blue.
 
 Output ONLY a JSON object in this format:
 {{
