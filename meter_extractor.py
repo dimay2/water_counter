@@ -184,8 +184,13 @@ Context:
         data = json.loads(response.text)
 
         if logic == "color_coded":
-            val_int = deterministic_parse(data.get("reading", "0"))
+            # Extract from new format: full_reading is 8 digits
+            full_reading = data.get("full_reading", "0")
+            # Deterministic parse takes string, keeps digits, trims last 3 (fractional), returns int
+            val_int = deterministic_parse(full_reading)
             color = data.get("color")
+            
+            logger.info(f"Extracted {color} meter: full_reading={full_reading}, parsed_val={val_int}")
             
             # Use prev_val based on color for validation
             prev_val = prev_val_left if color == "Red" else prev_val_right
