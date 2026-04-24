@@ -61,7 +61,7 @@ def process_location(location: str, client, profiles):
         # Force re-processing if no utility charges found in data
         required_keys = ["ХВС КПУ", "ГВС КПУ", "Водоотв. КПУ"]
         if location == "Tashkentskiy":
-             required_keys = ["ХВС КПУ", "ГВС КПУ", "Водоотв. КПУ", "Отоп.эн.пл.", "Сод.жил.пом. и обращение с ТКО*", "Запирающее устройство", "Газ"]
+             required_keys = ["ХВС КПУ", "ГВС КПУ", "Водоотв. КПУ", "Отоп.эн.пл.", "Содержание ТКО", "Запирающее устройство", "Газ"]
         
         if not all(key in loc_data for key in required_keys):
             loc_data["refresh_pdf"] = True

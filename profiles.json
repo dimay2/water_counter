@@ -1,0 +1,48 @@
+{
+    "Rumyantsevo": {
+        "spreadsheet_id": "127KX8icaYG03o5WVvnHWcXjxCxlR5s5lBMY4Gl1lSPY",
+        "sheet_gid": 455004741,
+        "pdf_parser": "rumyantsevo",
+        "meter_logic": "default",
+        "columns": {
+            "date": "A",
+            "meters": ["B", "C", "D", "E"],
+            "services": ["H", "I", "J", "K", "L", "M", "N", "O", "P"],
+            "previous_val": "Q",
+            "formula": "R"
+        },
+        "service_keys": [
+            "Содержание и техническое обслуживание помещений",
+            "Обращение с ТКО",
+            "Холодное водоснабжение",
+            "Холодная вода для ГВС",
+            "Теплоэнергия для ГВС",
+            "Водоотведение",
+            "Отопление",
+            "Охрана и мониторинг ЖК",
+            "Электроснабжение для СОИ:"
+        ]
+    },
+    "Tashkentskiy": {
+        "spreadsheet_id": "13GQRc8aDyMPyRmbW5LkWol5p6us9swjFxiSM40PblLc",
+        "sheet_gid": 86805166,
+        "pdf_parser": "tashkentskiy",
+        "meter_logic": "color_coded",
+        "columns": {
+            "date": "A",
+            "meters": ["F", "G"],
+            "services": ["I", "J", "K", "L", "M", "N", "O"],
+            "previous_val": null,
+            "formula": null
+        },
+        "service_keys": [
+            "ХВС КПУ",
+            "ГВС КПУ",
+            "Водоотв. КПУ",
+            "Отоп.эн.пл.",
+            "Содержание ТКО",
+            "Запирающее устройство",
+            "Газ"
+        ]
+    }
+}
