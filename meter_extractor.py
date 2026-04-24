@@ -147,14 +147,18 @@ def extract_room_meters(location: str, room: str, img_path: str, client, logic="
 
 ### OUTPUT FORMAT:
 Return the data in the following JSON structure:
-{
+{{
   "serial_number": "string",
   "whole_numbers_m3": "string (5 digits)",
   "decimal_liters": "string (3 digits)",
   "total_reading_formatted": "string (whole.decimal)",
   "confidence_score": "0.0-1.0",
-  "transition_notes": "Note any digits currently between two numbers"
-}"""
+  "transition_notes": "Note any digits currently between two numbers",
+  "color": "Red/Blue"
+}}
+
+Context:
+- Previous reading for this meter was: {prev_val_left if prev_val_left > 0 else prev_val_right}."""
     else:
         prompt = f"""Extract both water meters from the image.
         Return as JSON: {{"meter_1": "left_full_reading", "meter_2": "right_full_reading"}}
