@@ -191,13 +191,17 @@ Context:
         data = json.loads(response.text)
 
         if logic == "color_coded":
-            # Extract from new format: full_reading is 8 digits
-            full_reading = data.get("full_reading", "0")
+            # Extract from new format: whole_numbers_m3 (5 digits) + decimal_liters (3 digits)
+            m3 = data.get("whole_numbers_m3", "0")
+            liters = data.get("decimal_liters", "0")
+            
+            # Combine to get full reading
+            full_reading = f"{m3}{liters}"
             # Deterministic parse takes string, keeps digits, trims last 3 (fractional), returns int
             val_int = deterministic_parse(full_reading)
             color = data.get("color")
             
-            logger.info(f"Extracted {color} meter: full_reading={full_reading}, parsed_val={val_int}")
+            logger.info(f"Extracted {color} meter: m3={m3}, liters={liters}, full={full_reading}, parsed_val={val_int}")
             
             # Use prev_val based on color for validation
             prev_val = prev_val_left if color == "Red" else prev_val_right
