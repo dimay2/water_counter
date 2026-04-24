@@ -99,6 +99,8 @@ def process_location(location: str, client, profiles):
                         logger.warning(f"PDF parsing returned no data for {location}. Keeping refresh_pdf=True.")
                         loc_data["refresh_pdf"] = True
                         save_ingestion_data(ingestion_data)
+        
+        logger.info(f"Final parsed PDF data for {location}: {loc_data}")
 
 def extract_room_meters(location: str, room: str, img_path: str, client, logic="default", prev_val_left=0, prev_val_right=0, use_cache=True) -> dict:
     if not os.path.exists(img_path):
@@ -129,29 +131,30 @@ def extract_room_meters(location: str, room: str, img_path: str, client, logic="
     img = Image.open(img_path)
     
     if logic == "color_coded":
-        prompt = f"""Analyze the provided water meter image and extract the EXACT 8-digit reading. The reading consists of 5 black digits (cubic meters) and 3 red digits (liters).
+        prompt = f"""Act as a precise OCR and mechanical instrumentation expert. Your task is to extract water meter readings from an image of an ITELMA mechanical meter.
 
-Follow these high-precision rules:
-1. **Full Reading:** Extract ALL 8 digits together as one string.
-2. **Leading Zeros & Ambiguity (CRITICAL):** Do not ignore leading zeros in the cubic meter section. For the Red meter, if the first two digits appear as '00' but are positioned at the start of the 5-digit cubic meter counter, you MUST interpret them as '01' to align with the ground truth annotation '01099'.
-3. **Red Meter Specifics:** Read the 5 cubic meter digits as a full 5-digit number. For the Red meter, the reading is '01099' (1099 cubic meters).
-4. **Blue Meter Specifics:** For the Blue meter, ensure you read '00979' correctly as 979 cubic meters.
-5. **Color Detection:** Confirm if the dial is Red or Blue.
+### PHYSICAL LOGIC:
+1. DIGIT ROTATION: Digits on this meter rotate from BOTTOM to TOP. 
+   - If a digit is in transition (halfway between two numbers), the number at the TOP of the window is the CURRENT value, and the number emerging from the BOTTOM is the UPCOMING value.
+2. COLOR CODING: 
+   - BLACK rollers (usually 5 digits) represent whole cubic meters (m³).
+   - RED rollers (usually 3 digits) represent decimal fractions of a cubic meter (liters).
 
-Output ONLY a JSON object in this format:
-{{
+### EXTRACTION STEPS:
+1. Identify all 8 visible digit placeholders.
+2. For each placeholder, if two numbers are partially visible, apply the "Bottom-to-Top" rotation logic: select the number that is moving OUT (at the top) unless the lower-order digits have already reset to zero.
+3. Pay close attention to the far-left digits (e.g., 0 and 1) which may be in shadow or near the serial number.
+
+### OUTPUT FORMAT:
+Return the data in the following JSON structure:
+{
   "serial_number": "string",
-  "full_reading": "8-digit string",
-  "cubic_meters": "5-digit string",
-  "liters": "3-digit string",
-  "color": "Red/Blue",
-  "confidence_score": 0.0-1.0
-}}
-
-Context:
-- Annotated target Red meter: 01099451 (Expect 1099 cubic meters)
-- Annotated target Blue meter: 00979904 (Expect 979 cubic meters)
-- Your output MUST match the 8-digit full reading logic, prioritize the '01' leading digits for the Red meter if ambiguous."""
+  "whole_numbers_m3": "string (5 digits)",
+  "decimal_liters": "string (3 digits)",
+  "total_reading_formatted": "string (whole.decimal)",
+  "confidence_score": "0.0-1.0",
+  "transition_notes": "Note any digits currently between two numbers"
+}"""
     else:
         prompt = f"""Extract both water meters from the image.
         Return as JSON: {{"meter_1": "left_full_reading", "meter_2": "right_full_reading"}}
