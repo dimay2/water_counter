@@ -38,30 +38,29 @@ def main():
         results_list = []
         try:
             if profile["meter_logic"] == "color_coded":
-                # For Tashkentskiy: F=5 (Red/Left), G=6 (Blue/Right)
-                prev_left = int(prev_readings[5]) if prev_readings and len(prev_readings) > 5 and prev_readings[5].isdigit() else 0
-                prev_right = int(prev_readings[6]) if prev_readings and len(prev_readings) > 6 and prev_readings[6].isdigit() else 0
+                # For Tashkentskiy: F=5 (Red), G=6 (Blue)
+                meter_idx_map = [5, 6] 
                 
-                # Determine if we need to refresh before the loop to avoid cache hits skipping images
-                room_data_from_ingestion = ingestion_data.get(location, {}).get("all", {})
-                today = datetime.now().strftime("%Y%m%d")
                 # Force refresh for Tashkentskiy
                 force_refresh = True
 
                 final_left, final_right = 0, 0
-                # Process all images
                 for img_file in img_files:
                     logger.info(f"Processing meter image: {img_file}")
-                    # Color coded logic in extract_room_meters handles Red=Left, Blue=Right, and does not save to ingestion_data
-                    for img_file in img_files:
-                        logger.info(f"Processing meter image: {img_file}")
-                        is_red = "red" in img_file.lower()
-                        res = extract_room_meters(location, "all", img_file, client, logic="color_coded", 
-                                               prev_date=prev_date,
-                                               prev_val=prev_left if is_red else prev_right,
-                                               use_cache=not force_refresh)
-
-                    logger.info(f"Extracted from {img_file}: {res}")
+                    is_red = "red" in img_file.lower()
+                    m_idx = meter_idx_map[0] if is_red else meter_idx_map[1]
+                    
+                    last_reading = get_last_readings(profile["spreadsheet_id"], profile["sheet_gid"], meter_idx=m_idx)
+                    prev_date, prev_val = last_reading if last_reading else (None, 0)
+                    
+                    # Log inputs
+                    logger.info(f"Last Reading Date: {prev_date}, Last Reading Value: {prev_val}")
+                    
+                    res = extract_room_meters(location, "all", img_file, client, logic="color_coded", 
+                                           prev_date=prev_date,
+                                           prev_val=int(prev_val),
+                                           use_cache=not force_refresh)
+                    logger.info(f"{'Red' if is_red else 'Blue'} meter reading = {res['left'] if is_red else res['right']}, parsed_val={res['left'] if is_red else res['right']}")
                     final_left += res["left"]
                     final_right += res["right"]
                 

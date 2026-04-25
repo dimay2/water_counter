@@ -8,9 +8,12 @@ from datetime import datetime
 # Configure logging
 logger = logging.getLogger(__name__)
 
-def update_or_append_gsheet(spreadsheet_id, sheet_gid, data_row, ingestion_data=None):
+def col_to_idx(col_letter):
+    if not col_letter: return None
+    return ord(col_letter.upper()) - ord('A')
+
+def get_last_readings(spreadsheet_id, sheet_gid, meter_idx=None):
     try:
-        logger.info("Connecting to Google Sheets...")
         scopes = ["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"]
         creds, _ = google.auth.default(scopes=scopes)
         client = gspread.authorize(creds)
@@ -18,66 +21,100 @@ def update_or_append_gsheet(spreadsheet_id, sheet_gid, data_row, ingestion_data=
         spreadsheet = client.open_by_key(spreadsheet_id)
         sheet = spreadsheet.get_worksheet_by_id(sheet_gid)
         
-        today_date = datetime.now().strftime("%d/%m/%Y")
-        data_row[0] = today_date
+        all_values = sheet.get_all_values()
+        if not all_values:
+            return None
         
-        # If ingestion_data is provided, append additional service fields
-        if ingestion_data and "Rumyantsevo" in ingestion_data:
-            rumyantsevo = ingestion_data["Rumyantsevo"]
-            
-            # Service fields mapping to GSheet columns H-P (indices 7-15)
-            service_map = [
-                "Содержание и техническое обслуживание помещений",
-                "Обращение с ТКО",
-                "Холодное водоснабжение",
-                "Холодная вода для ГВС",
-                "Теплоэнергия для ГВС",
-                "Водоотведение",
-                "Отопление",
-                "Охрана и мониторинг ЖК",
-                "Электроснабжение для СОИ:"
-            ]
-            
-            # Start from Column H (index 7), so padding is needed if len(data_row) < 7
-            while len(data_row) < 7:
-                data_row.append("")
-                
-            for service in service_map:
-                data_row.append(rumyantsevo.get(service, "0"))
-            
-            # Column Q: Value of previous row (index 16), Column R: Formula (=SUM(H<row>:Q<row>))
-            all_values = sheet.get_all_values()
-            
-            # Determine the current row number for the formula (target_row will be set later, so calculate it here)
-            # If cell exists (update), target_row = cell.row. If appending, target_row = len(all_values) + 1
-            today_date = datetime.now().strftime("%d/%m/%Y")
-            cell = sheet.find(today_date, in_column=1)
-            target_row = cell.row if cell else len(all_values) + 1
-            
-            # Column Q: Keep previous row's value
-            if len(all_values) > 0:
-                last_row = all_values[-1]
-                data_row.append(last_row[16] if len(last_row) > 16 else "") # Q
-            else:
-                data_row.append("")
-                
-            # Column R: Formula =SUM(H<row>:Q<row>)
-            data_row.append(f"=SUM(H{target_row}:Q{target_row})")
+        # Traverse backwards to find the latest valid row for the meter
+        if meter_idx is not None:
+            for row in reversed(all_values):
+                val = row[meter_idx] if meter_idx < len(row) else ""
+                if val and val != "0" and val != "":
+                    # Return (Date, Value)
+                    return (row[0], val)
+            return None # Not found
+        else:
+            return all_values[-1]
+    except Exception as e:
+        logger.error(f"Error fetching last readings: {e}")
+        return None
 
+def update_or_append_gsheet(spreadsheet_id, sheet_gid, location, profile, results_list, ingestion_data=None):
+    try:
+        logger.info(f"Connecting to Google Sheets for {location}...")
+        scopes = ["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"]
+        creds, _ = google.auth.default(scopes=scopes)
+        client = gspread.authorize(creds)
+        
+        spreadsheet = client.open_by_key(spreadsheet_id)
+        sheet = spreadsheet.get_worksheet_by_id(sheet_gid)
+        
+        all_values = sheet.get_all_values()
+        today_date = datetime.now().strftime("%d/%m/%Y")
+        
         # Check if today's row exists
         cell = sheet.find(today_date, in_column=1)
+        target_row = cell.row if cell else len(all_values) + 1
+        
+        # Determine max index needed
+        cols = profile["columns"]
+        max_idx = 0
+        for key, val in cols.items():
+            if isinstance(val, list):
+                for c in val:
+                    max_idx = max(max_idx, col_to_idx(c))
+            elif val:
+                max_idx = max(max_idx, col_to_idx(val))
+        
+        data_row = [""] * (max_idx + 1)
+        
+        # 1. Date
+        data_row[col_to_idx(cols["date"])] = today_date
+        
+        # 2. Meters
+        meter_cols = cols["meters"]
+        for i, val in enumerate(results_list):
+            if i < len(meter_cols):
+                data_row[col_to_idx(meter_cols[i])] = str(val)
+                
+        # 3. Services (from ingestion_data)
+        if ingestion_data and location in ingestion_data:
+            loc_data = ingestion_data[location]
+            service_cols = cols.get("services", [])
+            service_keys = profile.get("service_keys", [])
+            
+            # Map services in order to service_cols
+            for i, service_name in enumerate(service_keys):
+                if i < len(service_cols):
+                    data_row[col_to_idx(service_cols[i])] = str(loc_data.get(service_name, "0"))
+                    
+        # 4. Previous value (Q)
+        prev_col = cols.get("previous_val")
+        if prev_col:
+            prev_idx = col_to_idx(prev_col)
+            if len(all_values) > 0:
+                last_row = all_values[-1]
+                data_row[prev_idx] = last_row[prev_idx] if len(last_row) > prev_idx else ""
+
+        # 5. Formula (R)
+        formula_col = cols.get("formula")
+        if formula_col:
+            # For Rumyantsevo: =SUM(H<row>:Q<row>)
+            # Let's generalize: SUM from first service to previous_val
+            first_service_col = cols["services"][0]
+            last_sum_col = cols["previous_val"]
+            data_row[col_to_idx(formula_col)] = f"=SUM({first_service_col}{target_row}:{last_sum_col}{target_row})"
+
         if cell:
-            logger.info(f"Updating existing row for {today_date}...")
-            range_to_update = f"A{cell.row}:R{cell.row}"
+            logger.info(f"Updating existing row for {today_date} at row {target_row}...")
+            range_to_update = f"A{target_row}:{chr(ord('A') + max_idx)}{target_row}"
             sheet.update(range_name=range_to_update, values=[data_row], value_input_option='USER_ENTERED')
-            target_row = cell.row
         else:
             logger.info(f"Appending new row for {today_date}...")
             sheet.append_row(data_row, value_input_option='USER_ENTERED')
-            target_row = len(sheet.get_all_values())
             
-        # Apply right alignment to the entire row (Columns A-R)
-        sheet.format(f"A{target_row}:R{target_row}", {"horizontalAlignment": "RIGHT"})
+        # Apply right alignment
+        sheet.format(f"A{target_row}:{chr(ord('A') + max_idx)}{target_row}", {"horizontalAlignment": "RIGHT"})
         
         logger.info("Successfully updated Google Sheets!")
         return True
