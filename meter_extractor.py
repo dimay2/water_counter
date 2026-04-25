@@ -188,6 +188,10 @@ Return the data in the following JSON structure:
         response = call_gemini_with_retry(client, model_name, img, prompt)
         logger.info(f"API Response: {response.text}")
         data = json.loads(response.text)
+        
+        # If data is a list (as seen in logs), assume the first element is the meter reading
+        if isinstance(data, list):
+            data = data[0]
 
         if logic == "color_coded":
             # Extract from new format: whole_numbers_m3 (5 digits) + decimal_liters (3 digits)
@@ -199,17 +203,20 @@ Return the data in the following JSON structure:
             # Deterministic parse takes string, keeps digits, trims last 3 (fractional), returns int
             val_int = deterministic_parse(full_reading)
             color = data.get("color")
+            if not color:
+                color = "Red" if "red" in img_path.lower() else "Blue"
             
             logger.info(f"Extracted {color} meter: m3={m3}, liters={liters}, full={full_reading}, parsed_val={val_int}")
             
             # Use prev_val based on color for validation
-            prev_val = prev_val_left if color == "Red" else prev_val_right
+            # IMPORTANT: For color coded, we need to be careful with prev_val mapping
+            # prev_val is already passed as the specific left/right reading
             
             # Validation
             if prev_val > 0 and (val_int - prev_val) > 20:
                 raise ValueError(f"Validation failed for {location}.{room} ({color}): New={val_int}, Previous={prev_val}. Delta > 20.")
             if prev_val > 0 and val_int < prev_val:
-                logger.warning(f"New reading {val_int} is less than previous {prev_val} for {location}.{room} ({color}). Check if meter rolled over or extraction is wrong.")
+                logger.warning(f"New reading {val_int} is less than previous {prev_val} for {location}.{room} ({color}).")
 
             # Left = red, Right = blue
             if color == "Red":
@@ -219,8 +226,18 @@ Return the data in the following JSON structure:
             else:
                 left, right = 0, 0
         else:
-            left = deterministic_parse(data.get("meter_1", "0"))
-            right = deterministic_parse(data.get("meter_2", "0"))
+            # Handle Rumyantsevo which might return a list of meters
+            left = 0
+            right = 0
+            if isinstance(data, list):
+                # Assuming first is left, second is right
+                if len(data) >= 1:
+                    left = deterministic_parse(f"{data[0].get('whole_numbers_m3', '0')}{data[0].get('decimal_liters', '0')}")
+                if len(data) >= 2:
+                    right = deterministic_parse(f"{data[1].get('whole_numbers_m3', '0')}{data[1].get('decimal_liters', '0')}")
+            else:
+                left = deterministic_parse(data.get("meter_1", "0"))
+                right = deterministic_parse(data.get("meter_2", "0"))
             
             # Validation
             if prev_val_left > 0 and (left - prev_val_left) > 20:
