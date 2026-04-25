@@ -90,6 +90,8 @@ def main():
 
             else:
                 # Rumyantsevo: B=1 (K_L), C=2 (K_R), D=3 (B_L), E=4 (B_R)
+                # prev_date not available for Rumyantsevo currently
+                prev_date = None
                 pk_l = int(prev_readings[1]) if prev_readings and len(prev_readings) > 1 and prev_readings[1].isdigit() else 0
                 pk_r = int(prev_readings[2]) if prev_readings and len(prev_readings) > 2 and prev_readings[2].isdigit() else 0
                 pb_l = int(prev_readings[3]) if prev_readings and len(prev_readings) > 3 and prev_readings[3].isdigit() else 0
