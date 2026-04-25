@@ -125,6 +125,7 @@ def extract_room_meters(location: str, room: str, img_path: str, client, logic="
     if _CACHED_MODELS_TO_TRY is None:
         _CACHED_MODELS_TO_TRY = load_cached_models()
     model_name = _CACHED_MODELS_TO_TRY[0]
+    img = Image.open(img_path)
     
     # Temporal Annotation Assistance Prompt Logic
     days_elapsed = 0
