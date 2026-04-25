@@ -131,6 +131,9 @@ def extract_room_meters(location: str, room: str, img_path: str, client, logic="
     model_name = _CACHED_MODELS_TO_TRY[0]
     img = Image.open(img_path)
     
+    # Log annotation context
+    logger.info(f"Temporal Annotation Input -> Date: {prev_date}, Value: {prev_val}")
+
     # Temporal Annotation Assistance Prompt Logic
     days_elapsed = 0
     if prev_date:
@@ -149,27 +152,28 @@ Consumption Constraint: Total consumption cannot exceed 1.0 m^3 per day since th
 Max Allowed Reading = {prev_val} + ({days_elapsed} days × 1.0) = {prev_val + days_elapsed}.
 
 2. Mechanical Gear-Train Logic:
-   - Decode Right-to-Left. Use the fractional red digits to determine the "Lift" of the black digits.
-   - Rollover Threshold:
-     - If Red Digits are 900–999: The black unit digit is entering transition.
-     - If Red Digits are 000–100: The black unit digit has just completed a rollover.
-   - Staggered Alignment: If the visual reading is lower than the Previous Reading, look for "hidden" digits entering at the bottom of the drum (e.g., a '0' looking like a '1' due to gear slop).
+Driving Right Rule: Decode Right-to-Left. Use the fractional red digits to determine the "Lift" of the black digits.
+Rollover Threshold: * If Red Digits are 900–999: The black unit digit is entering transition.
+If Red Digits are 000–100: The black unit digit has just completed a rollover.
+Staggered Alignment: If the visual reading is lower than the Previous Reading, look for "hidden" digits entering at the bottom of the drum (e.g., a '0' looking like a '1' due to gear slop).
 
 3. Annotation Assistance & Validation:
-   - Calculate Max Allowed Reading (Done: {prev_val + days_elapsed}).
-   - Extract the visual digits (Center, Top, Bottom of each drum).
-   - If the extracted visual reading is outside the range {prev_val} to {prev_val + days_elapsed}, re-evaluate the leading black digits. Prioritize the value that fits the logical range over the "most centered" visual digit if a rollover is mechanically plausible.
+Step A: Calculate the Max Allowed Reading.
+Step B: Extract the visual digits (Center, Top, Bottom of each drum).
+Step C: If the extracted visual reading is outside the range [{prev_val}] to [{prev_val + days_elapsed}], re-evaluate the leading black digits. Prioritize the value that fits the logical range over the "most centered" visual digit if a rollover is mechanically plausible.
 
-4. Output Format:
-Return the data in the following JSON structure:
-{{
-  "serial_number": "string",
-  "whole_numbers_m3": "string (5 digits)",
-  "decimal_liters": "string (3 digits)",
-  "total_reading_formatted": "string (whole.decimal)",
-  "confidence_score": "0.0-1.0",
-  "transition_notes": "Note any digits currently between two numbers"
-}}"""
+4. Visual Artifact Filtering:
+Ignore vertical black shadows on the edges; identify the specific ink printed on the drum.
+Distinguish between the red background (fractional) and white/black background (cubic meters).
+
+5. Output Format:
+Calculation: Days Elapsed and Max Allowed Threshold.
+Visual Breakdown: Analysis per drum.
+Final Result: XXXXX (Whole Cubic Meters only).
+
+- Inputs:
+1. last reading date - {prev_date} and shall not be null or blank
+2. last reading value  - {prev_val} and shall not be null or blank"""
 
     def deterministic_parse(val_str):
         if not val_str:
