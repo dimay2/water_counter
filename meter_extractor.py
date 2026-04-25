@@ -121,6 +121,10 @@ def extract_room_meters(location: str, room: str, img_path: str, client, logic="
 
     logger.info(f"Processing {location} {room} meters for {today}...")
 
+    # Define variables for validation logic
+    prev_val_left = prev_val if logic != "color_coded" else (prev_val if logic == "color_coded" else 0)
+    prev_val_right = prev_val if logic != "color_coded" else (prev_val if logic == "color_coded" else 0)
+
     global _CACHED_MODELS_TO_TRY
     if _CACHED_MODELS_TO_TRY is None:
         _CACHED_MODELS_TO_TRY = load_cached_models()
