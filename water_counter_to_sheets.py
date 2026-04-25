@@ -40,29 +40,36 @@ def main():
             if profile["meter_logic"] == "color_coded":
                 # For Tashkentskiy: F=5 (Red), G=6 (Blue)
                 meter_idx_map = [5, 6] 
-                
+
                 # Force refresh for Tashkentskiy
                 force_refresh = True
 
-                today = datetime.now().strftime("%Y%m%d")
                 final_left, final_right = 0, 0
+                prev_left, prev_right = 0, 0 # Initialize variables
                 for img_file in img_files:
                     logger.info(f"Processing meter image: {img_file}")
                     is_red = "red" in img_file.lower()
                     m_idx = meter_idx_map[0] if is_red else meter_idx_map[1]
-                    
+
                     last_reading = get_last_readings(profile["spreadsheet_id"], profile["sheet_gid"], meter_idx=m_idx)
                     prev_date, prev_val = last_reading if last_reading else (None, 0)
-                    
+
+                    if is_red: prev_left = int(prev_val)
+                    else: prev_right = int(prev_val)
+
                     # Log inputs
                     logger.info(f"Last Reading Date: {prev_date}, Last Reading Value: {prev_val}")
-                    
+
                     res = extract_room_meters(location, "all", img_file, client, logic="color_coded", 
                                            prev_date=prev_date,
                                            prev_val=int(prev_val),
                                            use_cache=not force_refresh)
-                    logger.info(f"{'Red' if is_red else 'Blue'} meter reading = {res['left'] if is_red else res['right']}, parsed_val={res['left'] if is_red else res['right']}")
+
+                    val = res['left'] if is_red else res['right']
+                    logger.info(f"{'Red' if is_red else 'Blue'} meter reading = {val}")
                     final_left += res["left"]
+                    final_right += res["right"]
+
                     final_right += res["right"]
                 
                 results_list = [final_left, final_right]
