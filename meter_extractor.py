@@ -188,9 +188,13 @@ Final Result: XXXXX (Whole Cubic Meters only).
         # Remove leading zeros and convert to int
         return int(trimmed.lstrip("0") or "0")
 
+    # Log the prompt sent to Gemini
+    logger.debug(f"Prompt sent to Gemini:\n{prompt}")
+
     try:
         response = call_gemini_with_retry(client, model_name, img, prompt)
-        logger.info(f"API Response: {response.text}")
+        # Log the raw response for debugging
+        logger.info(f"Raw Gemini API Response: {response.text}")
         data = json.loads(response.text)
         
         # If data is a list (as seen in logs), assume the first element is the meter reading
