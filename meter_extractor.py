@@ -199,6 +199,7 @@ Final Result: XXXXX (Whole Cubic Meters only).
 
         if logic == "color_coded":
             # Extract from new format: whole_numbers_m3 (5 digits) + decimal_liters (3 digits)
+            # The model now returns "whole_numbers_m3" and "decimal_liters" directly in the JSON response
             m3 = data.get("whole_numbers_m3", "0")
             liters = data.get("decimal_liters", "0")
             
