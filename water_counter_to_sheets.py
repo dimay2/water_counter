@@ -43,9 +43,11 @@ def main():
 
                 # Force refresh for Tashkentskiy
                 force_refresh = True
+                today = datetime.now().strftime("%Y%m%d")
 
                 final_left, final_right = 0, 0
                 prev_left, prev_right = 0, 0 # Initialize variables
+
                 for img_file in img_files:
                     logger.info(f"Processing meter image: {img_file}")
                     is_red = "red" in img_file.lower()
