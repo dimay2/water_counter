@@ -102,7 +102,7 @@ def process_location(location: str, client, profiles):
         
         logger.info(f"Final parsed PDF data for {location}: {loc_data}")
 
-def extract_room_meters(location: str, room: str, img_path: str, client, logic="default", prev_val_left=0, prev_val_right=0, use_cache=True) -> dict:
+def extract_room_meters(location: str, room: str, img_path: str, client, logic="default", prev_date=None, prev_val=0, use_cache=True) -> dict:
     if not os.path.exists(img_path):
         logger.error(f"Image not found: {img_path}")
         return {"left": 0, "right": 0}
@@ -112,40 +112,50 @@ def extract_room_meters(location: str, room: str, img_path: str, client, logic="
     room_data = loc_data.get(room, {})
 
     today = datetime.now().strftime("%Y%m%d")
+    today_dt = datetime.now()
 
     # Check if we already have data for today's date
     if use_cache and room_data.get("date") == today and not room_data.get("refresh", False):
         logger.info(f"Cache hit for {location}.{room} on {today}. Skipping extraction.")
-        logger.info(f"Decoded meter values for {location}.{room}: Left={room_data.get('left', 0)}, Right={room_data.get('right', 0)}")
         return {"left": room_data.get("left", 0), "right": room_data.get("right", 0)}
 
     logger.info(f"Processing {location} {room} meters for {today}...")
-    logger.info(f"Extracting meters from image: {os.path.basename(img_path)}")
-    logger.info(f"Previous readings for {location}.{room}: Left={prev_val_left}, Right={prev_val_right}")
 
     global _CACHED_MODELS_TO_TRY
     if _CACHED_MODELS_TO_TRY is None:
         _CACHED_MODELS_TO_TRY = load_cached_models()
-
     model_name = _CACHED_MODELS_TO_TRY[0]
-    img = Image.open(img_path)
     
-    if logic == "color_coded":
-        prompt = f"""Act as a precise OCR and mechanical instrumentation expert. Your task is to extract water meter readings from an image of an ITELMA mechanical meter.
+    # Temporal Annotation Assistance Prompt Logic
+    days_elapsed = 0
+    if prev_date:
+        try:
+            prev_dt = datetime.strptime(prev_date, "%d/%m/%Y")
+            days_elapsed = (today_dt - prev_dt).days
+        except ValueError:
+            pass
+            
+    prompt = f"""Task: Extract digits from an ITELMA mechanical water meter image using Temporal Annotation Assistance.
+1. Input Parameters:
+Previous Reading: {prev_val}
+Previous Reading Date: {prev_date}
+Current Date: {today_dt.strftime("%d/%m/%Y")}
+Consumption Constraint: Total consumption cannot exceed 1.0 m^3 per day since the last reading.
+Max Allowed Reading = {prev_val} + ({days_elapsed} days × 1.0) = {prev_val + days_elapsed}.
 
-### PHYSICAL LOGIC:
-1. DIGIT ROTATION: Digits on this meter rotate from BOTTOM to TOP. 
-   - If a digit is in transition (halfway between two numbers), the number at the TOP of the window is the CURRENT value, and the number emerging from the BOTTOM is the UPCOMING value.
-2. COLOR CODING: 
-   - BLACK rollers (usually 5 digits) represent whole cubic meters (m³).
-   - RED rollers (usually 3 digits) represent decimal fractions of a cubic meter (liters).
+2. Mechanical Gear-Train Logic:
+   - Decode Right-to-Left. Use the fractional red digits to determine the "Lift" of the black digits.
+   - Rollover Threshold:
+     - If Red Digits are 900–999: The black unit digit is entering transition.
+     - If Red Digits are 000–100: The black unit digit has just completed a rollover.
+   - Staggered Alignment: If the visual reading is lower than the Previous Reading, look for "hidden" digits entering at the bottom of the drum (e.g., a '0' looking like a '1' due to gear slop).
 
-### EXTRACTION STEPS:
-1. Identify all 8 visible digit placeholders.
-2. For each placeholder, if two numbers are partially visible, apply the "Bottom-to-Top" rotation logic: select the number that is moving OUT (at the top) unless the lower-order digits have already reset to zero.
-3. Pay close attention to the far-left digits (e.g., 0 and 1) which may be in shadow or near the serial number.
+3. Annotation Assistance & Validation:
+   - Calculate Max Allowed Reading (Done: {prev_val + days_elapsed}).
+   - Extract the visual digits (Center, Top, Bottom of each drum).
+   - If the extracted visual reading is outside the range {prev_val} to {prev_val + days_elapsed}, re-evaluate the leading black digits. Prioritize the value that fits the logical range over the "most centered" visual digit if a rollover is mechanically plausible.
 
-### OUTPUT FORMAT:
+4. Output Format:
 Return the data in the following JSON structure:
 {{
   "serial_number": "string",
@@ -153,24 +163,8 @@ Return the data in the following JSON structure:
   "decimal_liters": "string (3 digits)",
   "total_reading_formatted": "string (whole.decimal)",
   "confidence_score": "0.0-1.0",
-  "transition_notes": "Note any digits currently between two numbers",
-  "color": "Red/Blue"
-}}
-
-Context:
-- Previous reading for this meter was: {prev_val_left if prev_val_left > 0 else prev_val_right}."""
-    else:
-        prompt = f"""Extract both water meters from the image.
-        Return as JSON: {{"meter_1": "left_full_reading", "meter_2": "right_full_reading"}}
-        
-        Rules:
-        - Extract full counter readings including leading zeros and fractional digits (e.g., "00456.789").
-        - meter_1 is the Left meter, meter_2 is the Right meter.
-        
-        Context:
-        - Previous readings: Left={prev_val_left}, Right={prev_val_right}
-        
-        Do not include serial numbers."""
+  "transition_notes": "Note any digits currently between two numbers"
+}}"""
 
     def deterministic_parse(val_str):
         if not val_str:
