@@ -53,9 +53,14 @@ def main():
                 for img_file in img_files:
                     logger.info(f"Processing meter image: {img_file}")
                     # Color coded logic in extract_room_meters handles Red=Left, Blue=Right, and does not save to ingestion_data
-                    res = extract_room_meters(location, "all", img_file, client, logic="color_coded", 
-                                           prev_val_left=prev_left, prev_val_right=prev_right,
-                                           use_cache=not force_refresh)
+                    for img_file in img_files:
+                        logger.info(f"Processing meter image: {img_file}")
+                        is_red = "red" in img_file.lower()
+                        res = extract_room_meters(location, "all", img_file, client, logic="color_coded", 
+                                               prev_date=prev_date,
+                                               prev_val=prev_left if is_red else prev_right,
+                                               use_cache=not force_refresh)
+
                     logger.info(f"Extracted from {img_file}: {res}")
                     final_left += res["left"]
                     final_right += res["right"]
