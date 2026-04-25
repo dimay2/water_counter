@@ -40,38 +40,37 @@ def main():
             if profile["meter_logic"] == "color_coded":
                 # For Tashkentskiy: F=5 (Red), G=6 (Blue)
                 meter_idx_map = [5, 6] 
-
+                
+                # Fetch last readings for each meter
+                red_reading = get_last_readings(profile["spreadsheet_id"], profile["sheet_gid"], meter_idx=5)
+                blue_reading = get_last_readings(profile["spreadsheet_id"], profile["sheet_gid"], meter_idx=6)
+                
                 # Force refresh for Tashkentskiy
                 force_refresh = True
                 today = datetime.now().strftime("%Y%m%d")
 
                 final_left, final_right = 0, 0
-                prev_left, prev_right = 0, 0 # Initialize variables
-
+                prev_left, prev_right = 0, 0
+                
                 for img_file in img_files:
                     logger.info(f"Processing meter image: {img_file}")
                     is_red = "red" in img_file.lower()
-                    m_idx = meter_idx_map[0] if is_red else meter_idx_map[1]
-
-                    last_reading = get_last_readings(profile["spreadsheet_id"], profile["sheet_gid"], meter_idx=m_idx)
-                    prev_date, prev_val = last_reading if last_reading else (None, 0)
-
-                    if is_red: prev_left = int(prev_val)
-                    else: prev_right = int(prev_val)
-
-                    # Log inputs
-                    logger.info(f"Last Reading Date: {prev_date}, Last Reading Value: {prev_val}")
+                    
+                    prev_date, prev_val = red_reading if is_red else blue_reading
+                    prev_val = int(prev_val) if prev_val else 0
+                    
+                    if is_red: prev_left = prev_val
+                    else: prev_right = prev_val
+                    
+                    logger.info(f"Location: {location}, Date: {prev_date}, Previous Reading: {prev_val}")
 
                     res = extract_room_meters(location, "all", img_file, client, logic="color_coded", 
                                            prev_date=prev_date,
-                                           prev_val=int(prev_val),
+                                           prev_val=prev_val,
                                            use_cache=not force_refresh)
-
-                    val = res['left'] if is_red else res['right']
-                    logger.info(f"{'Red' if is_red else 'Blue'} meter reading = {val}")
+                    
+                    logger.info(f"{'Red' if is_red else 'Blue'} meter reading = {res['left'] if is_red else res['right']}")
                     final_left += res["left"]
-                    final_right += res["right"]
-
                     final_right += res["right"]
                 
                 results_list = [final_left, final_right]

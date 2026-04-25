@@ -12,7 +12,7 @@ def col_to_idx(col_letter):
     if not col_letter: return None
     return ord(col_letter.upper()) - ord('A')
 
-def get_last_readings(spreadsheet_id, sheet_gid, meter_idx=None):
+def get_last_readings(spreadsheet_id, sheet_gid):
     try:
         scopes = ["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"]
         creds, _ = google.auth.default(scopes=scopes)
@@ -25,16 +25,13 @@ def get_last_readings(spreadsheet_id, sheet_gid, meter_idx=None):
         if not all_values:
             return None
         
-        # Traverse backwards to find the latest valid row for the meter
-        if meter_idx is not None:
-            for row in reversed(all_values):
-                val = row[meter_idx] if meter_idx < len(row) else ""
-                if val and val != "0" and val != "":
-                    # Return (Date, Value)
-                    return (row[0], val)
-            return None # Not found
-        else:
-            return all_values[-1]
+        # Traverse rows backwards to find the last populated reading
+        # We assume the last row with non-empty meter values is the last valid one.
+        for row in reversed(all_values):
+            # Check if any meter column (col 1-6) is populated
+            if any(val and val != "0" and val != "" for val in row[1:7]):
+                return row
+        return all_values[-1]
     except Exception as e:
         logger.error(f"Error fetching last readings: {e}")
         return None
