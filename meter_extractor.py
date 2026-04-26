@@ -188,46 +188,33 @@ Final Result: XXXXX (Whole Cubic Meters only).
         # Remove leading zeros and convert to int
         return int(trimmed.lstrip("0") or "0")
 
-    # Log the prompt sent to Gemini
-    logger.debug(f"Prompt sent to Gemini:\n{prompt}")
-
+    logger.info(f"Full prompt sent to Gemini:\n{prompt}")
     try:
         response = call_gemini_with_retry(client, model_name, img, prompt)
-        # Log the raw response for debugging
         logger.info(f"Raw Gemini API Response: {response.text}")
         data = json.loads(response.text)
         
-        # If data is a list (as seen in logs), assume the first element is the meter reading
-        if isinstance(data, list):
-            data = data[0]
-
+        # Parse 'FinalResult' which may be an object or a list
+        final_result = data.get("FinalResult", "0")
+        
         if logic == "color_coded":
-            # Extract from new format: whole_numbers_m3 (5 digits) + decimal_liters (3 digits)
-            # The model now returns "whole_numbers_m3" and "decimal_liters" directly in the JSON response
-            m3 = data.get("whole_numbers_m3", "0")
-            liters = data.get("decimal_liters", "0")
+            # For color coded, FinalResult is often a string or object.
+            # Handle potential object with Left/Right keys
+            if isinstance(final_result, dict):
+                full_reading = final_result.get("LeftMeter", "0") if color == "Red" else final_result.get("RightMeter", "0")
+            else:
+                full_reading = str(final_result)
             
-            # Combine to get full reading
-            full_reading = f"{m3}{liters}"
-            # Deterministic parse takes string, keeps digits, trims last 3 (fractional), returns int
             val_int = deterministic_parse(full_reading)
-            color = data.get("color")
-            if not color:
-                color = "Red" if "red" in img_path.lower() else "Blue"
+            logger.info(f"Extracted {color} meter: full={full_reading}, parsed_val={val_int}")
             
-            logger.info(f"Extracted {color} meter: m3={m3}, liters={liters}, full={full_reading}, parsed_val={val_int}")
+            # Validation logic based on color
+            prev_val = prev_val_left if color == "Red" else prev_val_right
             
-            # Use prev_val based on color for validation
-            # IMPORTANT: For color coded, we need to be careful with prev_val mapping
-            # prev_val is already passed as the specific left/right reading
-            
-            # Validation
             if prev_val > 0 and (val_int - prev_val) > 20:
                 raise ValueError(f"Validation failed for {location}.{room} ({color}): New={val_int}, Previous={prev_val}. Delta > 20.")
-            if prev_val > 0 and val_int < prev_val:
-                logger.warning(f"New reading {val_int} is less than previous {prev_val} for {location}.{room} ({color}).")
-
-            # Left = red, Right = blue
+            
+            # Assign correctly: Red=Left, Blue=Right
             if color == "Red":
                 left, right = val_int, 0
             elif color == "Blue":
@@ -235,16 +222,13 @@ Final Result: XXXXX (Whole Cubic Meters only).
             else:
                 left, right = 0, 0
         else:
-            # Handle Rumyantsevo which might return a list of meters
-            left = 0
-            right = 0
-            if isinstance(data, list):
+            # Handle Rumyantsevo (list of meter results)
+            if isinstance(final_result, list):
                 # Assuming first is left, second is right
-                if len(data) >= 1:
-                    left = deterministic_parse(f"{data[0].get('whole_numbers_m3', '0')}{data[0].get('decimal_liters', '0')}")
-                if len(data) >= 2:
-                    right = deterministic_parse(f"{data[1].get('whole_numbers_m3', '0')}{data[1].get('decimal_liters', '0')}")
+                left = deterministic_parse(final_result[0] if len(final_result) >= 1 else "0")
+                right = deterministic_parse(final_result[1] if len(final_result) >= 2 else "0")
             else:
+                # Fallback to older format if needed
                 left = deterministic_parse(data.get("meter_1", "0"))
                 right = deterministic_parse(data.get("meter_2", "0"))
             
