@@ -122,8 +122,11 @@ def extract_room_meters(location: str, room: str, img_path: str, client, logic="
     logger.info(f"Processing {location} {room} meters for {today}...")
 
     # Define variables for validation logic
-    prev_val_left = prev_val if logic != "color_coded" else (prev_val if logic == "color_coded" else 0)
-    prev_val_right = prev_val if logic != "color_coded" else (prev_val if logic == "color_coded" else 0)
+    if isinstance(prev_val, (tuple, list)) and len(prev_val) >= 2:
+        prev_val_left, prev_val_right = prev_val[0], prev_val[1]
+    else:
+        prev_val_left = prev_val
+        prev_val_right = prev_val
 
     global _CACHED_MODELS_TO_TRY
     if _CACHED_MODELS_TO_TRY is None:
@@ -145,11 +148,11 @@ def extract_room_meters(location: str, room: str, img_path: str, client, logic="
             
     prompt = f"""Task: Extract digits from an ITELMA mechanical water meter image using Temporal Annotation Assistance.
 1. Input Parameters:
-Previous Reading: {prev_val}
+Previous Reading: {prev_val_left}
 Previous Reading Date: {prev_date}
 Current Date: {today_dt.strftime("%d/%m/%Y")}
 Consumption Constraint: Total consumption cannot exceed 1.0 m^3 per day since the last reading.
-Max Allowed Reading = {prev_val} + ({days_elapsed} days × 1.0) = {prev_val + days_elapsed}.
+Max Allowed Reading = {prev_val_left} + ({days_elapsed} days × 1.0) = {prev_val_left + days_elapsed}.
 
 2. Mechanical Gear-Train Logic:
 Driving Right Rule: Decode Right-to-Left. Use the fractional red digits to determine the "Lift" of the black digits.
@@ -160,7 +163,7 @@ Staggered Alignment: If the visual reading is lower than the Previous Reading, l
 3. Annotation Assistance & Validation:
 Step A: Calculate the Max Allowed Reading.
 Step B: Extract the visual digits (Center, Top, Bottom of each drum).
-Step C: If the extracted visual reading is outside the range [{prev_val}] to [{prev_val + days_elapsed}], re-evaluate the leading black digits. Prioritize the value that fits the logical range over the "most centered" visual digit if a rollover is mechanically plausible.
+Step C: If the extracted visual reading is outside the range [{prev_val_left}] to [{prev_val_left + days_elapsed}], re-evaluate the leading black digits. Prioritize the value that fits the logical range over the "most centered" visual digit if a rollover is mechanically plausible.
 
 4. Visual Artifact Filtering:
 Ignore vertical black shadows on the edges; identify the specific ink printed on the drum.
@@ -173,31 +176,32 @@ Final Result: XXXXX (Whole Cubic Meters only).
 
 - Inputs:
 1. last reading date - {prev_date} and shall not be null or blank
-2. last reading value  - {prev_val} and shall not be null or blank"""
+2. last reading value  - {prev_val_left} and shall not be null or blank"""
 
     def deterministic_parse(val_str):
         if not val_str:
             return 0
         # Keep only digits
         digits = "".join(filter(str.isdigit, str(val_str)))
-        # Trim last 3 fractional digits as requested
-        if len(digits) > 3:
-            trimmed = digits[:-3]
-        else:
-            trimmed = "0"
-        # Remove leading zeros and convert to int
-        return int(trimmed.lstrip("0") or "0")
+        if not digits:
+            return 0
+        # Convert to int (leading zeros are handled by int())
+        return int(digits)
 
-    logger.info(f"Full prompt sent to Gemini:\n{prompt}")
     try:
         response = call_gemini_with_retry(client, model_name, img, prompt)
         logger.info(f"Raw Gemini API Response: {response.text}")
         data = json.loads(response.text)
         
         # Parse 'FinalResult' which may be an object or a list
-        final_result = data.get("FinalResult", "0")
+        final_result = data.get("FinalResult", data.get("final_result", "0"))
         
         if logic == "color_coded":
+            # Extract color from response or filename
+            color = data.get("color", data.get("Color"))
+            if not color:
+                color = "Red" if "red" in img_path.lower() else "Blue"
+
             # For color coded, FinalResult is often a string or object.
             # Handle potential object with Left/Right keys
             if isinstance(final_result, dict):
@@ -222,11 +226,14 @@ Final Result: XXXXX (Whole Cubic Meters only).
             else:
                 left, right = 0, 0
         else:
-            # Handle Rumyantsevo (list of meter results)
+            # Handle Rumyantsevo (list or dict of meter results)
             if isinstance(final_result, list):
                 # Assuming first is left, second is right
                 left = deterministic_parse(final_result[0] if len(final_result) >= 1 else "0")
                 right = deterministic_parse(final_result[1] if len(final_result) >= 2 else "0")
+            elif isinstance(final_result, dict):
+                left = deterministic_parse(final_result.get("LeftMeter", final_result.get("meter_1", "0")))
+                right = deterministic_parse(final_result.get("RightMeter", final_result.get("meter_2", "0")))
             else:
                 # Fallback to older format if needed
                 left = deterministic_parse(data.get("meter_1", "0"))

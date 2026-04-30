@@ -108,8 +108,8 @@ def main():
                 k_img = os.path.join(img_dir, "kitchen.jpeg")
                 b_img = os.path.join(img_dir, "bacthroom.jpeg")
                 
-                kitchen = extract_room_meters(location, "kitchen", k_img, client, prev_date=prev_date, prev_val=pk_l)
-                bathroom = extract_room_meters(location, "bathroom", b_img, client, prev_date=prev_date, prev_val=pb_l)
+                kitchen = extract_room_meters(location, "kitchen", k_img, client, prev_date=prev_date, prev_val=(pk_l, pk_r))
+                bathroom = extract_room_meters(location, "bathroom", b_img, client, prev_date=prev_date, prev_val=(pb_l, pb_r))
                 results_list = [kitchen["left"], kitchen["right"], bathroom["left"], bathroom["right"]]
 
             # 3. Upload
