@@ -6,6 +6,7 @@ from PIL import Image
 from pydantic import BaseModel
 from pdf_extractor import parse_rumyantsevo_pdf, parse_tashkentskiy_pdf
 from gemini_utils import call_gemini_with_retry
+from prompt_utils import load_prompts
 
 # Configure logging
 logger = logging.getLogger(__name__)
@@ -146,37 +147,31 @@ def extract_room_meters(location: str, room: str, img_path: str, client, logic="
         except ValueError:
             pass
             
-    prompt = f"""Task: Extract digits from an ITELMA mechanical water meter image using Temporal Annotation Assistance.
-1. Input Parameters:
-Previous Reading: {prev_val_left}
-Previous Reading Date: {prev_date}
-Current Date: {today_dt.strftime("%d/%m/%Y")}
-Consumption Constraint: Total consumption cannot exceed 1.0 m^3 per day since the last reading.
-Max Allowed Reading = {prev_val_left} + ({days_elapsed} days × 1.0) = {prev_val_left + days_elapsed}.
+    prompts = load_prompts()
+    if location == "Tashkentskiy":
+        prompt = prompts.get("tashkentskiy_image_prompt_template", "")
+    elif location == "Rumyantsevo":
+        prompt = prompts.get("rumyantsevo_image_prompt_template", "")
+    else:
+        prompt_template = prompts.get("meter_extraction_temporal_prompt", "")
+        if prompt_template:
+            try:
+                prompt = prompt_template.format(
+                    prev_val_left=prev_val_left,
+                    prev_date=prev_date,
+                    current_date=today_dt.strftime("%d/%m/%Y"),
+                    days_elapsed=days_elapsed,
+                    max_allowed_reading=prev_val_left + days_elapsed
+                )
+            except Exception as e:
+                logger.error(f"Error formatting prompt: {e}")
+                prompt = prompt_template
+        else:
+            prompt = ""
 
-2. Mechanical Gear-Train Logic:
-Driving Right Rule: Decode Right-to-Left. Use the fractional red digits to determine the "Lift" of the black digits.
-Rollover Threshold: * If Red Digits are 900–999: The black unit digit is entering transition.
-If Red Digits are 000–100: The black unit digit has just completed a rollover.
-Staggered Alignment: If the visual reading is lower than the Previous Reading, look for "hidden" digits entering at the bottom of the drum (e.g., a '0' looking like a '1' due to gear slop).
-
-3. Annotation Assistance & Validation:
-Step A: Calculate the Max Allowed Reading.
-Step B: Extract the visual digits (Center, Top, Bottom of each drum).
-Step C: If the extracted visual reading is outside the range [{prev_val_left}] to [{prev_val_left + days_elapsed}], re-evaluate the leading black digits. Prioritize the value that fits the logical range over the "most centered" visual digit if a rollover is mechanically plausible.
-
-4. Visual Artifact Filtering:
-Ignore vertical black shadows on the edges; identify the specific ink printed on the drum.
-Distinguish between the red background (fractional) and white/black background (cubic meters).
-
-5. Output Format:
-Calculation: Days Elapsed and Max Allowed Threshold.
-Visual Breakdown: Analysis per drum.
-Final Result: XXXXX (Whole Cubic Meters only).
-
-- Inputs:
-1. last reading date - {prev_date} and shall not be null or blank
-2. last reading value  - {prev_val_left} and shall not be null or blank"""
+    if not prompt:
+        logger.error(f"Could not find prompt for location {location}")
+        return {"left": 0, "right": 0}
 
     def deterministic_parse(val_str):
         if not val_str:
@@ -193,57 +188,89 @@ Final Result: XXXXX (Whole Cubic Meters only).
         logger.info(f"Raw Gemini API Response: {response.text}")
         data = json.loads(response.text)
         
-        # Parse 'FinalResult' which may be an object or a list
-        final_result = data.get("FinalResult", data.get("final_result", "0"))
-        
-        if logic == "color_coded":
-            # Extract color from response or filename
-            color = data.get("color", data.get("Color"))
-            if not color:
-                color = "Red" if "red" in img_path.lower() else "Blue"
+        is_new_format = False
+        if isinstance(data, list) and len(data) > 0 and isinstance(data[0], dict) and "full_reading" in data[0]:
+            is_new_format = True
+        elif isinstance(data, dict) and "full_reading" in data:
+            is_new_format = True
 
-            # For color coded, FinalResult is often a string or object.
-            # Handle potential object with Left/Right keys
-            if isinstance(final_result, dict):
-                full_reading = final_result.get("LeftMeter", "0") if color == "Red" else final_result.get("RightMeter", "0")
+        if is_new_format:
+            if logic == "color_coded":
+                # Tashkentskiy
+                res_dict = data[0] if isinstance(data, list) else data
+                full_reading = res_dict.get("full_reading", "0")
+                color = res_dict.get("color", res_dict.get("Color"))
+                if not color:
+                    color = "Red" if "red" in img_path.lower() else "Blue"
+                val_int = deterministic_parse(full_reading)
+                logger.info(f"Extracted {color} meter: full={full_reading}, parsed_val={val_int}")
+                
+                prev_val = prev_val_left if color == "Red" else prev_val_right
+                if color == "Red":
+                    left, right = val_int, 0
+                else:
+                    left, right = 0, val_int
             else:
-                full_reading = str(final_result)
-            
-            val_int = deterministic_parse(full_reading)
-            logger.info(f"Extracted {color} meter: full={full_reading}, parsed_val={val_int}")
-            
-            # Validation logic based on color
-            prev_val = prev_val_left if color == "Red" else prev_val_right
-            
-            if prev_val > 0 and (val_int - prev_val) > 20:
-                raise ValueError(f"Validation failed for {location}.{room} ({color}): New={val_int}, Previous={prev_val}. Delta > 20.")
-            
-            # Assign correctly: Red=Left, Blue=Right
-            if color == "Red":
-                left, right = val_int, 0
-            elif color == "Blue":
-                left, right = 0, val_int
-            else:
-                left, right = 0, 0
+                # Rumyantsevo
+                if isinstance(data, list):
+                    left = deterministic_parse(data[0].get("full_reading", "0")) if len(data) >= 1 else 0
+                    right = deterministic_parse(data[1].get("full_reading", "0")) if len(data) >= 2 else 0
+                else:
+                    left = deterministic_parse(data.get("full_reading", "0"))
+                    right = 0
         else:
-            # Handle Rumyantsevo (list or dict of meter results)
-            if isinstance(final_result, list):
-                # Assuming first is left, second is right
-                left = deterministic_parse(final_result[0] if len(final_result) >= 1 else "0")
-                right = deterministic_parse(final_result[1] if len(final_result) >= 2 else "0")
-            elif isinstance(final_result, dict):
-                left = deterministic_parse(final_result.get("LeftMeter", final_result.get("meter_1", "0")))
-                right = deterministic_parse(final_result.get("RightMeter", final_result.get("meter_2", "0")))
-            else:
-                # Fallback to older format if needed
-                left = deterministic_parse(data.get("meter_1", "0"))
-                right = deterministic_parse(data.get("meter_2", "0"))
+            # Old logic
+            # Parse 'FinalResult' which may be an object or a list
+            raw_data = data
+            if isinstance(data, list):
+                data = data[0]
+            final_result = data.get("FinalResult", data.get("final_result", data.get("meter_reading", "0")))
             
-            # Validation
-            if prev_val_left > 0 and (left - prev_val_left) > 20:
-                raise ValueError(f"Validation failed for {location}.{room} (Left): New={left}, Previous={prev_val_left}. Delta > 20.")
-            if prev_val_right > 0 and (right - prev_val_right) > 20:
-                raise ValueError(f"Validation failed for {location}.{room} (Right): New={right}, Previous={prev_val_right}. Delta > 20.")
+            if logic == "color_coded":
+                # Extract color from response or filename
+                color = data.get("color", data.get("Color"))
+                if not color:
+                    color = "Red" if "red" in img_path.lower() else "Blue"
+
+                # For color coded, FinalResult is often a string or object.
+                # Handle potential object with Left/Right keys
+                if isinstance(final_result, dict):
+                    full_reading = final_result.get("LeftMeter", "0") if color == "Red" else final_result.get("RightMeter", "0")
+                else:
+                    full_reading = str(final_result)
+                
+                val_int = deterministic_parse(full_reading)
+                logger.info(f"Extracted {color} meter: full={full_reading}, parsed_val={val_int}")
+                
+                # Validation logic based on color
+                prev_val = prev_val_left if color == "Red" else prev_val_right
+                
+                # Assign correctly: Red=Left, Blue=Right
+                if color == "Red":
+                    left, right = val_int, 0
+                elif color == "Blue":
+                    left, right = 0, val_int
+                else:
+                    left, right = 0, 0
+            else:
+                # Handle Rumyantsevo (list or dict of meter results)
+                if isinstance(final_result, list):
+                    # Assuming first is left, second is right
+                    left = deterministic_parse(final_result[0] if len(final_result) >= 1 else "0")
+                    right = deterministic_parse(final_result[1] if len(final_result) >= 2 else "0")
+                elif isinstance(final_result, dict):
+                    left = deterministic_parse(final_result.get("LeftMeter", final_result.get("meter_1", "0")))
+                    right = deterministic_parse(final_result.get("RightMeter", final_result.get("meter_2", "0")))
+                else:
+                    # Fallback to older format if needed
+                    left = deterministic_parse(data.get("meter_1", "0"))
+                    right = deterministic_parse(data.get("meter_2", "0"))
+            
+        # Validation
+        if prev_val_left > 0 and (left - prev_val_left) > 20:
+            raise ValueError(f"Validation failed for {location}.{room} (Left): New={left}, Previous={prev_val_left}. Delta > 20.")
+        if prev_val_right > 0 and (right - prev_val_right) > 20:
+            raise ValueError(f"Validation failed for {location}.{room} (Right): New={right}, Previous={prev_val_right}. Delta > 20.")
 
         # Determine refresh status
         should_refresh = not (left > 0 and right > 0)
