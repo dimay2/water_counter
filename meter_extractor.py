@@ -189,21 +189,21 @@ def extract_room_meters(location: str, room: str, img_path: str, client, logic="
         data = json.loads(response.text)
         
         is_new_format = False
-        if isinstance(data, list) and len(data) > 0 and isinstance(data[0], dict) and "full_reading" in data[0]:
+        if isinstance(data, list) and len(data) > 0 and isinstance(data[0], dict) and "black_digits" in data[0]:
             is_new_format = True
-        elif isinstance(data, dict) and "full_reading" in data:
+        elif isinstance(data, dict) and "black_digits" in data:
             is_new_format = True
 
         if is_new_format:
             if logic == "color_coded":
                 # Tashkentskiy
                 res_dict = data[0] if isinstance(data, list) else data
-                full_reading = res_dict.get("full_reading", "0")
+                reading_str = res_dict.get("black_digits", "0")
                 color = res_dict.get("color", res_dict.get("Color"))
                 if not color:
                     color = "Red" if "red" in img_path.lower() else "Blue"
-                val_int = deterministic_parse(full_reading)
-                logger.info(f"Extracted {color} meter: full={full_reading}, parsed_val={val_int}")
+                val_int = deterministic_parse(reading_str)
+                logger.info(f"Extracted {color} meter: black_digits={reading_str}, parsed_val={val_int}")
                 
                 prev_val = prev_val_left if color == "Red" else prev_val_right
                 if color == "Red":
@@ -213,10 +213,10 @@ def extract_room_meters(location: str, room: str, img_path: str, client, logic="
             else:
                 # Rumyantsevo
                 if isinstance(data, list):
-                    left = deterministic_parse(data[0].get("full_reading", "0")) if len(data) >= 1 else 0
-                    right = deterministic_parse(data[1].get("full_reading", "0")) if len(data) >= 2 else 0
+                    left = deterministic_parse(data[0].get("black_digits", "0")) if len(data) >= 1 else 0
+                    right = deterministic_parse(data[1].get("black_digits", "0")) if len(data) >= 2 else 0
                 else:
-                    left = deterministic_parse(data.get("full_reading", "0"))
+                    left = deterministic_parse(data.get("black_digits", "0"))
                     right = 0
         else:
             # Old logic
