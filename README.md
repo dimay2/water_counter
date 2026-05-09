@@ -4,7 +4,8 @@ This project automates the reading of water meter values from local images using
 
 ## Features
 
-- **Intelligent Model Selection:** Dynamically finds and prioritizes working Gemini vision models to ensure high availability.
+- **Dynamic Model Management:** Automatically finds, prioritizes, and switches between working Gemini vision models. Upon API errors (e.g., 429 RESOURCE_EXHAUSTED), models are dynamically demoted to ensure subsequent retries use a different, higher-ranked model.
+- **Concise API Error Logging:** Displays only the error code and status for Gemini API failures, reducing log verbosity.
 - **PDF Invoice Parsing:** Automatically parses location-specific PDF invoices using Gemini Vision, extracting service-specific charges into a structured format.
 - **Persistent Caching:** Remembers the last successful model in `working_models.json` and manages extraction status via `data_for_ingestion.json`.
 - **Robust Error Handling & Retries:** Uses exponential backoff (via `tenacity`) to automatically retry temporary `503 Server Errors`.
@@ -14,6 +15,8 @@ This project automates the reading of water meter values from local images using
     - **Service Charge Cleaning:** Cleans service charge currency values from PDFs by removing digits after the comma.
 - **Color-Coded Meter Logic:** Specifically designed to handle locations like "Tashkentskiy" where meters are identified by color (Red for Left/Hot, Blue for Right/Cold). The system ensures that cached readings are only considered complete if both red and blue meter readings are successfully populated for the day.
 - **Google Sheets Integration:** Appends combined meter readings and service charges as a new row to a configured Google Sheet.
+    - **Dynamic Formula Generation:** Automatically inserts specific SUM formulas for Rumyantsevo (Column R: `=SUM(B<row>:Q<row>)`) and Tashkentskiy (Column P: `=SUM(H<row>:O<row>)`). For other locations, it replicates and adjusts formulas from the row above.
+    - **Robust Row Appending:** Accurately determines the last non-empty row in a sheet for appending new data, preventing unintended blank rows and ensuring formulas reference the correct current row.
 - **Clean Logging:** Provides clear tracking of the active model, extraction results, validation checks, and data upload status.
 
 ## How It Works
@@ -22,12 +25,15 @@ This project automates the reading of water meter values from local images using
 1. **Meter Extraction:** 
    - For standard locations (e.g., Rumyantsevo), it extracts both meters from single images (kitchen, bathroom).
    - For color-coded locations (e.g., Tashkentskiy), it identifies the meter color and reading from individual images and combines them.
-2. **Validation:** Before saving, the system fetches the last row from Google Sheets. If the new reading is more than 20 units higher than the previous one, it raises a validation error and stops processing for that location.
+2. **Validation:** Before saving, the system fetches the last row from Google Sheets. If the new reading is more than 20 units higher than the previous one, it raises a validation error and stops processing for that location. The system also automatically fetches previous meter readings from Google Sheets if `prev_left` or `prev_right` are zero in `data_for_ingestion.json`.
 3. **PDF Parsing:** The system scans for PDF invoices in location-specific directories. Gemini Vision parses the utility charges into structured data.
 4. **Data Ingestion:**
    - Extracted values are cleaned and stored in `data_for_ingestion.json`.
-   - Data is uploaded to specific columns in Google Sheets based on the location profile.
-   - Summarization formulas are dynamically applied where configured.
+   - Data is uploaded to specific columns in Google Sheets based on the location profile. The target row for new data is robustly determined by finding the last non-empty row in the sheet.
+   - Summarization formulas are dynamically applied:
+     - For Rumyantsevo, Column R gets `"=SUM(B<current_row>:Q<current_row>)"`.
+     - For Tashkentskiy, Column P gets `"=SUM(H<current_row>:O<current_row>)"`.
+     - For other configured locations, formulas are copied from the row above and adjusted to the `current_row`.
 
 ## Setup and Installation
 
@@ -79,5 +85,6 @@ python water_counter_to_sheets.py
 -   `gsheet_uploader.py`: Logic for Google Sheets connectivity and data ingestion.
 -   `Input_data/`: Directory for input images and PDF invoices.
 -   `data_for_ingestion.json`: Local cache for extracted readings and PDF service charge data.
+-   `working_models.json`: Caches the order of successful Gemini models.
 -   `README.md`: Project description and setup instructions.
 -   `.env`: Configuration for API keys and Spreadsheet IDs.
