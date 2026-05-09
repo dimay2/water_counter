@@ -2,20 +2,19 @@ import os
 import json
 import logging
 from gemini_utils import call_gemini_with_retry
+from prompt_utils import load_prompts
 
 logger = logging.getLogger(__name__)
 
 def parse_rumyantsevo_pdf(pdf_path: str, client, model_name) -> dict:
     logger.info(f"Initiating Rumyantsevo PDF parsing: {pdf_path}")
     file_upload = client.files.upload(file=pdf_path)
-    prompt = """
-    Extract utility charges from the table column 2 ("Виды услуг") and column 9 ("Всего начисл.").
-    - Fields: "Содержание и техническое обслуживание помещений", "Обращение с ТКО", "Холодное водоснабжение", "Холодная вода для ГВС", "Теплоэнергия для ГВС", "Водоотведение", "Отопление", "Охрана и мониторинг ЖК", "Электроснабжение для СОИ:"
-    - Clean currency: remove all digits after comma.
-    - JSON: {"Service Name": "Value"}
-    """
+
+    prompts = load_prompts()
+    prompt = prompts.get("rumyantsevo_pdf_prompt", "")
+
     try:
-        response = call_gemini_with_retry(client, model_name, file_upload, prompt, context_info=f"Rumyantsevo PDF: {os.path.basename(pdf_path)}")
+        response = call_gemini_with_retry(client, file_upload, prompt, context_info=f"Rumyantsevo PDF: {os.path.basename(pdf_path)}")
         data = json.loads(response.text)
         logger.info(f"Parsed PDF: {data}")
         return data
@@ -30,17 +29,12 @@ def parse_tashkentskiy_pdf(pdf_path: str, client, model_name) -> dict:
     file_upload = client.files.upload(file=pdf_path)
     # Note: Using a standard key name to avoid encoding issues with PDF extraction
     # Key: "Сод.жил.пом. и обращение с ТКО*"
-    prompt = """
-    Extract utility charges from table column "Вид платежа".
-    Fields to extract:
-    - Left part: "ХВС КПУ", "ГВС КПУ", "Водоотв. КПУ", "Отоп.эн.пл."
-    - Right part: "Содержание ТКО", "Запирающее устройство", "Газ"
-    - Ignore "Взнос на кап. ремонт".
-    - Rule: Clean currency (remove digits after comma).
-    - JSON: {"ХВС КПУ": "Value", "ГВС КПУ": "Value", "Водоотв. КПУ": "Value", "Отоп.эн.пл.": "Value", "Содержание ТКО": "Value", "Запирающее устройство": "Value", "Газ": "Value"}
-    """
+
+    prompts = load_prompts()
+    prompt = prompts.get("tashkentskiy_pdf_prompt", "")
+
     try:
-        response = call_gemini_with_retry(client, model_name, file_upload, prompt, context_info=f"Tashkentskiy PDF: {os.path.basename(pdf_path)}")
+        response = call_gemini_with_retry(client, file_upload, prompt, context_info=f"Tashkentskiy PDF: {os.path.basename(pdf_path)}")
         data = json.loads(response.text)
         logger.info(f"Parsed PDF: {data}")
         return data
@@ -49,3 +43,4 @@ def parse_tashkentskiy_pdf(pdf_path: str, client, model_name) -> dict:
         return {}
     finally:
         client.files.delete(name=file_upload.name)
+

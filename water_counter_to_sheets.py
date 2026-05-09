@@ -42,8 +42,8 @@ def main():
                 meter_idx_map = [5, 6] 
                 
                 # Fetch last readings for each meter
-                red_reading = get_last_readings(profile["spreadsheet_id"], profile["sheet_gid"], meter_idx=5)
-                blue_reading = get_last_readings(profile["spreadsheet_id"], profile["sheet_gid"], meter_idx=6)
+                red_reading = get_last_readings(profile["spreadsheet_id"], profile["sheet_gid"], meter_idx=5) or (None, 0)
+                blue_reading = get_last_readings(profile["spreadsheet_id"], profile["sheet_gid"], meter_idx=6) or (None, 0)
                 
                 # Force refresh for Tashkentskiy
                 force_refresh = True
@@ -56,15 +56,24 @@ def main():
                     logger.info(f"Processing meter image: {img_file}")
                     is_red = "red" in img_file.lower()
                     
-                    prev_date, prev_val = red_reading if is_red else blue_reading
-                    prev_val = int(prev_val) if prev_val else 0
+                    raw_reading = red_reading if is_red else blue_reading
+                    if raw_reading:
+                        prev_date, prev_val = raw_reading
+                    else:
+                        prev_date, prev_val = None, 0
+                    
+                    # Ensure prev_val is an integer (handle '973.0' case)
+                    try:
+                        prev_val = int(float(prev_val)) if prev_val else 0
+                    except (ValueError, TypeError):
+                        prev_val = 0
                     
                     if is_red: prev_left = prev_val
                     else: prev_right = prev_val
                     
                     logger.info(f"Location: {location}, Date: {prev_date}, Previous Reading: {prev_val}")
 
-                    res = extract_room_meters(location, "all", img_file, client, logic="color_coded", 
+                    res = extract_room_meters(location, "all", img_file, client, profiles, logic="color_coded", 
                                            prev_date=prev_date,
                                            prev_val=prev_val,
                                            use_cache=not force_refresh)
@@ -100,19 +109,34 @@ def main():
                 # Rumyantsevo: B=1 (K_L), C=2 (K_R), D=3 (B_L), E=4 (B_R)
                 # prev_date not available for Rumyantsevo currently
                 prev_date = None
-                pk_l = int(prev_readings[1]) if prev_readings and len(prev_readings) > 1 and prev_readings[1].isdigit() else 0
-                pk_r = int(prev_readings[2]) if prev_readings and len(prev_readings) > 2 and prev_readings[2].isdigit() else 0
-                pb_l = int(prev_readings[3]) if prev_readings and len(prev_readings) > 3 and prev_readings[3].isdigit() else 0
-                pb_r = int(prev_readings[4]) if prev_readings and len(prev_readings) > 4 and prev_readings[4].isdigit() else 0
+                pk_l = int(prev_readings[1]) if prev_readings and len(prev_readings) > 1 and str(prev_readings[1]).strip().isdigit() else 0
+                pk_r = int(prev_readings[2]) if prev_readings and len(prev_readings) > 2 and str(prev_readings[2]).strip().isdigit() else 0
+                pb_l = int(prev_readings[3]) if prev_readings and len(prev_readings) > 3 and str(prev_readings[3]).strip().isdigit() else 0
+                pb_r = int(prev_readings[4]) if prev_readings and len(prev_readings) > 4 and str(prev_readings[4]).strip().isdigit() else 0
 
                 k_img = os.path.join(img_dir, "kitchen.jpeg")
                 b_img = os.path.join(img_dir, "bacthroom.jpeg")
                 
-                kitchen = extract_room_meters(location, "kitchen", k_img, client, prev_date=prev_date, prev_val=(pk_l, pk_r))
-                bathroom = extract_room_meters(location, "bathroom", b_img, client, prev_date=prev_date, prev_val=(pb_l, pb_r))
+                kitchen = extract_room_meters(location, "kitchen", k_img, client, profiles, prev_date=prev_date, prev_val=(pk_l, pk_r))
+                bathroom = extract_room_meters(location, "bathroom", b_img, client, profiles, prev_date=prev_date, prev_val=(pb_l, pb_r))
                 results_list = [kitchen["left"], kitchen["right"], bathroom["left"], bathroom["right"]]
 
             # 3. Upload
+            if ingestion_data.get(location, {}).get("refresh_pdf"):
+                logger.error(f"Upload canceled for {location} due to PDF parsing requiring a refresh (missing or '0' values).")
+                continue
+
+            zero_indices = [i for i, val in enumerate(results_list) if val == 0]
+            if zero_indices:
+                logger.error(f"Upload canceled for {location} due to '0' values in extracted meter readings: {results_list}.")
+                # Only flag refresh for extraction failure. Ignore previous left/right cache values.
+                if location in ingestion_data:
+                    for room_key, room_data in ingestion_data[location].items():
+                        if isinstance(room_data, dict) and "refresh" in room_data:
+                            room_data["refresh"] = True
+                save_ingestion_data(ingestion_data)
+                continue
+
             update_or_append_gsheet(
                 profile["spreadsheet_id"], 
                 profile["sheet_gid"], 

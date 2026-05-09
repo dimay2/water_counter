@@ -60,10 +60,14 @@ def process_location(location: str, client, profiles):
         loc_data = ingestion_data.setdefault(location, {})
         
         # Force re-processing if no utility charges found in data
-        required_keys = ["ХВС КПУ", "ГВС КПУ", "Водоотв. КПУ"]
+        required_keys = []
         if location == "Tashkentskiy":
              required_keys = ["ХВС КПУ", "ГВС КПУ", "Водоотв. КПУ", "Отоп.эн.пл.", "Содержание ТКО", "Запирающее устройство", "Газ"]
+        elif location == "Rumyantsevo":
+             required_keys = ["Холодное водоснабжение", "Холодная вода для ГВС", "Водоотведение"]
         
+        logger.debug(f"[{location}] Before initial refresh_pdf check: loc_data keys={list(loc_data.keys())}, required_keys={required_keys}")
+        logger.debug(f"[{location}] Initial all(key in loc_data for key in required_keys) is {all(key in loc_data for key in required_keys)}")
         if not all(key in loc_data for key in required_keys):
             loc_data["refresh_pdf"] = True
 
@@ -89,8 +93,32 @@ def process_location(location: str, client, profiles):
                         else:
                             loc_data.update(pdf_data)
                         
-                        # Only set refresh_pdf to False if all keys are present
-                        if all(key in loc_data for key in required_keys):
+                        # Only set refresh_pdf to False if all keys are present and no zero values
+                        has_zero_values = False
+                        zero_keys = []
+                        
+                        # Gather keys to check
+                        keys_to_check = {}
+                        if isinstance(pdf_data, list):
+                            for d in pdf_data:
+                                if isinstance(d, dict):
+                                    keys_to_check.update(d)
+                        else:
+                            keys_to_check = pdf_data
+
+                        for k, v in keys_to_check.items():
+                            val_str = str(v).strip()
+                            if val_str == "0" or val_str == "0.0" or val_str == "":
+                                has_zero_values = True
+                                zero_keys.append(k)
+
+                        logger.debug(f"[{location}] After PDF parsing and before final refresh_pdf check: loc_data keys={list(loc_data.keys())}, has_zero_values={has_zero_values}")
+                        logger.debug(f"[{location}] Final all(key in loc_data for key in required_keys) is {all(key in loc_data for key in required_keys)}")
+
+                        if has_zero_values:
+                            logger.error(f"PDF extraction error: detected '0' or empty values for fields {zero_keys} in {location}")
+                            loc_data["refresh_pdf"] = True
+                        elif all(key in loc_data for key in required_keys):
                             loc_data["refresh_pdf"] = False
                         
                         save_ingestion_data(ingestion_data)
@@ -103,7 +131,7 @@ def process_location(location: str, client, profiles):
         
         logger.info(f"Final parsed PDF data for {location}: {loc_data}")
 
-def extract_room_meters(location: str, room: str, img_path: str, client, logic="default", prev_date=None, prev_val=0, use_cache=True) -> dict:
+def extract_room_meters(location: str, room: str, img_path: str, client, profiles, logic="default", prev_date=None, prev_val=0, use_cache=True) -> dict:
     if not os.path.exists(img_path):
         logger.error(f"Image not found: {img_path}")
         return {"left": 0, "right": 0}
@@ -122,12 +150,61 @@ def extract_room_meters(location: str, room: str, img_path: str, client, logic="
 
     logger.info(f"Processing {location} {room} meters for {today}...")
 
+    logger.info(f"Processing {location} {room} meters for {today}...")
+
     # Define variables for validation logic
+    current_prev_val_left = 0
+    current_prev_val_right = 0
+
     if isinstance(prev_val, (tuple, list)) and len(prev_val) >= 2:
-        prev_val_left, prev_val_right = prev_val[0], prev_val[1]
+        current_prev_val_left, current_prev_val_right = prev_val[0], prev_val[1]
     else:
-        prev_val_left = prev_val
-        prev_val_right = prev_val
+        current_prev_val_left = prev_val
+        current_prev_val_right = prev_val
+
+    # Check if we need to fetch from GSheet for Rumyantsevo if prev_left/right are 0 in ingestion_data
+    if location == "Rumyantsevo":
+        room_data_ingestion = ingestion_data.get(location, {}).get(room, {})
+        if (room_data_ingestion.get("prev_left", 0) == 0 or room_data_ingestion.get("prev_right", 0) == 0):
+            logger.info(f"Attempting to fetch previous meter values for {location}.{room} from Google Sheet.")
+            rumyantsevo_profile = profiles.get("Rumyantsevo", {})
+            spreadsheet_id = rumyantsevo_profile.get("spreadsheet_id")
+            sheet_gid = rumyantsevo_profile.get("sheet_gid")
+            profile_columns = rumyantsevo_profile.get("columns", {})
+
+            if spreadsheet_id and sheet_gid and profile_columns:
+                fetched_prev_vals = gsheet_uploader.get_previous_meter_readings_for_rumyantsevo_meters(
+                    spreadsheet_id, sheet_gid, profile_columns
+                )
+                if fetched_prev_vals:
+                    if room == "kitchen":
+                        current_prev_val_left = fetched_prev_vals["kitchen"]["prev_left"]
+                        current_prev_val_right = fetched_prev_vals["kitchen"]["prev_right"]
+                    elif room == "bathroom":
+                        current_prev_val_left = fetched_prev_vals["bathroom"]["prev_left"]
+                        current_prev_val_right = fetched_prev_vals["bathroom"]["prev_right"]
+                    logger.info(f"Fetched previous values for {location}.{room}: prev_left={current_prev_val_left}, prev_right={current_prev_val_right}")
+                    
+                    # Update ingestion_data so these values are persisted and used for current validation
+                    if location not in ingestion_data:
+                        ingestion_data[location] = {}
+                    if room not in ingestion_data[location]:
+                        ingestion_data[location][room] = {}
+                    ingestion_data[location][room]["prev_left"] = current_prev_val_left
+                    ingestion_data[location][room]["prev_right"] = current_prev_val_right
+                    save_ingestion_data(ingestion_data) # Save immediately after fetching
+                else:
+                    logger.warning(f"Could not fetch previous values for {location}.{room} from Google Sheet. Using existing (or default 0) values.")
+            else:
+                logger.error(f"Missing GSheet configuration for {location} in profiles.json. Cannot fetch previous values.")
+        else:
+             # If not fetching, ensure current_prev_val_left/right are updated from ingestion_data if available
+             current_prev_val_left = room_data_ingestion.get("prev_left", current_prev_val_left)
+             current_prev_val_right = room_data_ingestion.get("prev_right", current_prev_val_right)
+    
+    prev_val_left = current_prev_val_left
+    prev_val_right = current_prev_val_right
+
 
     global _CACHED_MODELS_TO_TRY
     if _CACHED_MODELS_TO_TRY is None:
@@ -149,7 +226,19 @@ def extract_room_meters(location: str, room: str, img_path: str, client, logic="
             
     prompts = load_prompts()
     if location == "Tashkentskiy":
-        prompt = prompts.get("tashkentskiy_image_prompt_template", "")
+        prompt_template = prompts.get("tashkentskiy_image_prompt_template", "")
+        if prompt_template:
+            try:
+                # Format with leading zeros to 5 digits for the prompt
+                prev_val_str = f"{int(float(prev_val_left if logic == 'color_coded' and 'red' in img_path.lower() else prev_val_right)):05d}"
+                # Derive leading 2 or 3 digits (take first 2 or 3)
+                leading_digits = f"{prev_val_str[:2]}\" or \"{prev_val_str[:3]}"
+                prompt = prompt_template.replace("01095", prev_val_str).replace("01\" or \"010", leading_digits)
+            except Exception as e:
+                logger.error(f"Error formatting prompt: {e}")
+                prompt = prompt_template
+        else:
+            prompt = ""
     elif location == "Rumyantsevo":
         prompt = prompts.get("rumyantsevo_image_prompt_template", "")
     else:
@@ -184,7 +273,7 @@ def extract_room_meters(location: str, room: str, img_path: str, client, logic="
         return int(digits)
 
     try:
-        response = call_gemini_with_retry(client, model_name, img, prompt)
+        response = call_gemini_with_retry(client, img, prompt)
         logger.info(f"Raw Gemini API Response: {response.text}")
         data = json.loads(response.text)
         

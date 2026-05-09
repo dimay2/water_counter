@@ -33,7 +33,7 @@
             "meters": ["F", "G"],
             "services": ["I", "J", "K", "L", "M", "N", "O"],
             "previous_val": null,
-            "formula": null
+            "formula": "P"
         },
         "service_keys": [
             "ХВС КПУ",
