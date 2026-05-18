@@ -46,11 +46,23 @@ def get_last_readings(spreadsheet_id, sheet_gid, meter_idx=None):
                     continue
             return None # Not found
         else:
-            # Find the last row with a non-empty date (column 0)
+            # Find the last row with a non-empty date (column 0) AND at least one meter value (usually B, C, D, E or F, G)
             for i in range(len(all_values) - 1, -1, -1):
                 row = all_values[i]
                 if row and len(row) > 0 and row[0].strip():
-                    return row
+                    # Check if any meter column (indices 1-6 typically) has data
+                    has_meter_data = False
+                    for idx in range(1, min(10, len(row))): # Check first few columns for any digit
+                        val = row[idx].strip()
+                        if val and any(c.isdigit() for c in val):
+                            try:
+                                if float(val) > 0:
+                                    has_meter_data = True
+                                    break
+                            except ValueError:
+                                continue
+                    if has_meter_data:
+                        return row
             return None
     except Exception as e:
         logger.error(f"Error fetching last readings: {e}")
@@ -201,34 +213,38 @@ def get_previous_meter_readings_for_rumyantsevo_meters(spreadsheet_id, sheet_gid
         if not all_values:
             return None
         
-        last_row = all_values[-1]
+        # Find the last row with actual meter data for Rumyantsevo (B, C, D, E)
+        last_row = None
+        meter_cols_indices = [col_to_idx(c) for c in profile_columns["meters"]]
         
-        meter_cols = profile_columns["meters"] # ["B", "C", "D", "E"]
+        for i in range(len(all_values) - 1, -1, -1):
+            row = all_values[i]
+            if not row or not row[0].strip():
+                continue
+            
+            has_data = False
+            for idx in meter_cols_indices:
+                if idx < len(row):
+                    val = row[idx].strip()
+                    if val and any(c.isdigit() for c in val):
+                        try:
+                            if float(val) > 0:
+                                has_data = True
+                                break
+                        except ValueError:
+                            continue
+            if has_data:
+                last_row = row
+                break
         
-        # Initialize with None or default values
-        kitchen_prev_left = 0
-        kitchen_prev_right = 0
-        bathroom_prev_left = 0
-        bathroom_prev_right = 0
+        if not last_row:
+            return None
         
         # Map column letters to indices and retrieve values
-        # Assuming meter_cols are always in order B, C, D, E
-        if len(meter_cols) > 0:
-            idx = col_to_idx(meter_cols[0]) # Column B for kitchen.left
-            if idx is not None and idx < len(last_row):
-                kitchen_prev_left = int(float(last_row[idx])) if last_row[idx].strip() else 0
-        if len(meter_cols) > 1:
-            idx = col_to_idx(meter_cols[1]) # Column C for kitchen.right
-            if idx is not None and idx < len(last_row):
-                kitchen_prev_right = int(float(last_row[idx])) if last_row[idx].strip() else 0
-        if len(meter_cols) > 2:
-            idx = col_to_idx(meter_cols[2]) # Column D for bathroom.left
-            if idx is not None and idx < len(last_row):
-                bathroom_prev_left = int(float(last_row[idx])) if last_row[idx].strip() else 0
-        if len(meter_cols) > 3:
-            idx = col_to_idx(meter_cols[3]) # Column E for bathroom.right
-            if idx is not None and idx < len(last_row):
-                bathroom_prev_right = int(float(last_row[idx])) if last_row[idx].strip() else 0
+        kitchen_prev_left = int(float(last_row[meter_cols_indices[0]])) if len(meter_cols_indices) > 0 and meter_cols_indices[0] < len(last_row) and last_row[meter_cols_indices[0]].strip() else 0
+        kitchen_prev_right = int(float(last_row[meter_cols_indices[1]])) if len(meter_cols_indices) > 1 and meter_cols_indices[1] < len(last_row) and last_row[meter_cols_indices[1]].strip() else 0
+        bathroom_prev_left = int(float(last_row[meter_cols_indices[2]])) if len(meter_cols_indices) > 2 and meter_cols_indices[2] < len(last_row) and last_row[meter_cols_indices[2]].strip() else 0
+        bathroom_prev_right = int(float(last_row[meter_cols_indices[3]])) if len(meter_cols_indices) > 3 and meter_cols_indices[3] < len(last_row) and last_row[meter_cols_indices[3]].strip() else 0
                 
         return {
             "kitchen": {

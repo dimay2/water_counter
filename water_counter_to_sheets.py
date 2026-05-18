@@ -28,9 +28,42 @@ def main():
         process_location(location, client, profiles)
         ingestion_data = load_ingestion_data()
         
-        # Get last readings from GSheet for validation
-        prev_readings = get_last_readings(profile["spreadsheet_id"], profile["sheet_gid"])
+        # Sync previous readings from GSheet into ingestion_data proactively
+        today_date_str = datetime.now().strftime("%d/%m/%Y")
         
+        if profile["meter_logic"] == "color_coded":
+            # Tashkentskiy
+            red_reading = get_last_readings(profile["spreadsheet_id"], profile["sheet_gid"], meter_idx=5)
+            blue_reading = get_last_readings(profile["spreadsheet_id"], profile["sheet_gid"], meter_idx=6)
+            
+            loc_data = ingestion_data.setdefault(location, {})
+            room_data = loc_data.setdefault("all", {})
+            
+            if red_reading and red_reading[0] != today_date_str:
+                room_data["prev_left"] = int(float(red_reading[1]))
+            if blue_reading and blue_reading[0] != today_date_str:
+                room_data["prev_right"] = int(float(blue_reading[1]))
+            
+            save_ingestion_data(ingestion_data)
+        else:
+            # Rumyantsevo
+            from gsheet_uploader import get_previous_meter_readings_for_rumyantsevo_meters
+            fetched_prev_vals = get_previous_meter_readings_for_rumyantsevo_meters(
+                profile["spreadsheet_id"], profile["sheet_gid"], profile["columns"]
+            )
+            if fetched_prev_vals:
+                loc_data = ingestion_data.setdefault(location, {})
+                for room in ["kitchen", "bathroom"]:
+                    room_data = loc_data.setdefault(room, {})
+                    # Only update if current data in ingestion_data is NOT for today
+                    if room_data.get("date") != datetime.now().strftime("%Y%m%d"):
+                        room_data["prev_left"] = fetched_prev_vals[room]["prev_left"]
+                        room_data["prev_right"] = fetched_prev_vals[room]["prev_right"]
+                save_ingestion_data(ingestion_data)
+
+        # Reload ingestion_data after sync
+        ingestion_data = load_ingestion_data()
+
         # 2. Extract Meters
         img_dir = os.path.join('Input_data', location)
         img_files = [os.path.join(img_dir, f) for f in os.listdir(img_dir) if f.lower().endswith(('.jpeg', '.jpg', '.png'))]
@@ -39,43 +72,35 @@ def main():
         try:
             if profile["meter_logic"] == "color_coded":
                 # For Tashkentskiy: F=5 (Red), G=6 (Blue)
-                meter_idx_map = [5, 6] 
                 
-                # Fetch last readings for each meter
-                red_reading = get_last_readings(profile["spreadsheet_id"], profile["sheet_gid"], meter_idx=5) or (None, 0)
-                blue_reading = get_last_readings(profile["spreadsheet_id"], profile["sheet_gid"], meter_idx=6) or (None, 0)
+                # Use the synced values from ingestion_data
+                room_data = ingestion_data.get(location, {}).get("all", {})
+                prev_left = room_data.get("prev_left", 0)
+                prev_right = room_data.get("prev_right", 0)
                 
                 # Force refresh for Tashkentskiy
                 force_refresh = True
                 today = datetime.now().strftime("%Y%m%d")
 
                 final_left, final_right = 0, 0
-                prev_left, prev_right = 0, 0
                 
                 for img_file in img_files:
                     logger.info(f"Processing meter image: {img_file}")
                     is_red = "red" in img_file.lower()
                     
+                    cur_prev_val = prev_left if is_red else prev_right
+                    
+                    # Re-fetch specific readings to get dates if needed for prompts
+                    red_reading = get_last_readings(profile["spreadsheet_id"], profile["sheet_gid"], meter_idx=5) or (None, 0)
+                    blue_reading = get_last_readings(profile["spreadsheet_id"], profile["sheet_gid"], meter_idx=6) or (None, 0)
                     raw_reading = red_reading if is_red else blue_reading
-                    if raw_reading:
-                        prev_date, prev_val = raw_reading
-                    else:
-                        prev_date, prev_val = None, 0
-                    
-                    # Ensure prev_val is an integer (handle '973.0' case)
-                    try:
-                        prev_val = int(float(prev_val)) if prev_val else 0
-                    except (ValueError, TypeError):
-                        prev_val = 0
-                    
-                    if is_red: prev_left = prev_val
-                    else: prev_right = prev_val
-                    
-                    logger.info(f"Location: {location}, Date: {prev_date}, Previous Reading: {prev_val}")
+                    prev_date = raw_reading[0] if raw_reading else None
+
+                    logger.info(f"Location: {location}, Date: {prev_date}, Previous Reading: {cur_prev_val}")
 
                     res = extract_room_meters(location, "all", img_file, client, profiles, logic="color_coded", 
                                            prev_date=prev_date,
-                                           prev_val=prev_val,
+                                           prev_val=cur_prev_val,
                                            use_cache=not force_refresh)
                     
                     logger.info(f"{'Red' if is_red else 'Blue'} meter reading = {res['left'] if is_red else res['right']}")
@@ -84,7 +109,7 @@ def main():
                 
                 results_list = [final_left, final_right]
 
-                # After processing all images, update ingestion_data for Tashkentskiy.all
+                # Update ingestion_data with final results
                 loc_data = ingestion_data.setdefault(location, {})
                 room_data = loc_data.setdefault("all", {})
                 room_data.update({
@@ -97,28 +122,22 @@ def main():
                 })
                 save_ingestion_data(ingestion_data)
 
-                # Check if we got zeros (this check is now redundant since extract_room_meters will raise an error if validation fails)
-                # if results_list[0] == 0 and results_list[1] == 0:
-                #     logger.warning(f"Detected 0 values for {location}. Setting refresh=true.")
-                #     ingestion_data = load_ingestion_data()
-                #     if "all" in ingestion_data.get(location, {}):
-                #         ingestion_data[location]["all"]["refresh"] = True
-                #         save_ingestion_data(ingestion_data)
-
             else:
                 # Rumyantsevo: B=1 (K_L), C=2 (K_R), D=3 (B_L), E=4 (B_R)
-                # prev_date not available for Rumyantsevo currently
-                prev_date = None
-                pk_l = int(prev_readings[1]) if prev_readings and len(prev_readings) > 1 and str(prev_readings[1]).strip().isdigit() else 0
-                pk_r = int(prev_readings[2]) if prev_readings and len(prev_readings) > 2 and str(prev_readings[2]).strip().isdigit() else 0
-                pb_l = int(prev_readings[3]) if prev_readings and len(prev_readings) > 3 and str(prev_readings[3]).strip().isdigit() else 0
-                pb_r = int(prev_readings[4]) if prev_readings and len(prev_readings) > 4 and str(prev_readings[4]).strip().isdigit() else 0
+                loc_data = ingestion_data.get(location, {})
+                k_data = loc_data.get("kitchen", {})
+                b_data = loc_data.get("bathroom", {})
+
+                pk_l = k_data.get("prev_left", 0)
+                pk_r = k_data.get("prev_right", 0)
+                pb_l = b_data.get("prev_left", 0)
+                pb_r = b_data.get("prev_right", 0)
 
                 k_img = os.path.join(img_dir, "kitchen.jpeg")
                 b_img = os.path.join(img_dir, "bathroom.jpeg")
                 
-                kitchen = extract_room_meters(location, "kitchen", k_img, client, profiles, prev_date=prev_date, prev_val=(pk_l, pk_r))
-                bathroom = extract_room_meters(location, "bathroom", b_img, client, profiles, prev_date=prev_date, prev_val=(pb_l, pb_r))
+                kitchen = extract_room_meters(location, "kitchen", k_img, client, profiles, prev_val=(pk_l, pk_r))
+                bathroom = extract_room_meters(location, "bathroom", b_img, client, profiles, prev_val=(pb_l, pb_r))
                 results_list = [kitchen["left"], kitchen["right"], bathroom["left"], bathroom["right"]]
 
             # 3. Upload
