@@ -7,6 +7,7 @@ from pydantic import BaseModel
 from pdf_extractor import parse_rumyantsevo_pdf, parse_tashkentskiy_pdf
 from gemini_utils import call_gemini_with_retry
 from prompt_utils import load_prompts
+import gsheet_uploader
 
 # Configure logging
 logger = logging.getLogger(__name__)
@@ -70,6 +71,23 @@ def process_location(location: str, client, profiles):
         logger.debug(f"[{location}] Initial all(key in loc_data for key in required_keys) is {all(key in loc_data for key in required_keys)}")
         if not all(key in loc_data for key in required_keys):
             loc_data["refresh_pdf"] = True
+
+        # Check if today's date exists in GSheet. If not, force PDF refresh.
+        today_date = datetime.now().strftime("%d/%m/%Y")
+        profile = profiles.get(location, {})
+        spreadsheet_id = profile.get("spreadsheet_id")
+        sheet_gid = profile.get("sheet_gid")
+        
+        if spreadsheet_id and sheet_gid:
+            last_record = gsheet_uploader.get_last_readings(spreadsheet_id, sheet_gid)
+            if last_record:
+                last_date = last_record[0]
+                if last_date != today_date:
+                    logger.info(f"[{location}] Today's date {today_date} not found in GSheet (last date: {last_date}). Forcing PDF refresh.")
+                    loc_data["refresh_pdf"] = True
+            else:
+                logger.info(f"[{location}] GSheet is empty. Forcing PDF refresh.")
+                loc_data["refresh_pdf"] = True
 
         if loc_data.get("refresh_pdf") is not True:
             logger.info(f"PDF data for {location} is already up to date. Skipping parsing.")

@@ -1,0 +1,18 @@
+[
+  {
+    "name": "rumyantsevo_pdf_prompt",
+    "content": "Extract utility charges from the table column 2 (\"Виды услуг\") and column 9 (\"Всего начисл.\").\n- Fields: \"Содержание и техническое обслуживание помещений\", \"Обращение с ТКО\", \"Холодное водоснабжение\", \"Холодная вода для ГВС\", \"Теплоэнергия для ГВС\", \"Водоотведение\", \"Отопление\", \"Охрана и мониторинг ЖК\", \"Электроснабжение для СОИ:\"\n- Clean currency: remove all digits after comma.\n- JSON: {\"Service Name\": \"Value\"}"
+  },
+  {
+    "name": "tashkentskiy_pdf_prompt",
+    "content": "Extract utility charges from table column \"Вид платежа\".\nFields to extract:\n- Left part: \"ХВС КПУ\", \"ГВС КПУ\", \"Водоотв. КПУ\", \"Отоп.эн.пл.\"\n- Right part: \"Содержание ТКО\", \"Запирающее устройство\", \"Газ\"\n- Ignore \"Взнос на кап. ремонт\".\n- Rule: Clean currency (remove digits after comma).\n- JSON: {\"ХВС КПУ\": \"Value\", \"ГВС КПУ\": \"Value\", \"Водоотв. КПУ\": \"Value\", \"Отоп.эн.пл.\": \"Value\", \"Содержание ТКО\": \"Value\", \"Запирающее устройство\": \"Value\", \"Газ\": \"Value\"}"
+  },
+  {
+    "name": "rumyantsevo_image_prompt_template",
+    "content": "Task: Extract the exact digits displayed on the mechanical water meters in the image.\nInstructions:\n1. Multiple Meters: There are multiple water meters visible in the image. Extract the reading for each clearly visible meter.\n2. Meter Structure: Each meter displays a row of 8 digits.\n- The first 5 digits on the left are white text on a black background (whole cubic meters).\n- The last 3 digits on the right are red text on a white background (fractional cubic meters).\n3. Visual Extraction: Read the digits strictly from left to right.\n4. Misaligned Digits: If a digit is misaligned (rolling up or down), report the specific digit that occupies the majority of the viewing window.\nOutput Format:\nReturn ONLY a JSON array strictly in the following format:\n\nJSON\n[\n  {\n    \"black_digits\": \"XXXXX\",\n    \"red_digits\": \"YYY\",\n    \"full_reading\": \"XXXXXYYY\"\n  },\n  {\n    \"black_digits\": \"XXXXX\",\n    \"red_digits\": \"YYY\",\n    \"full_reading\": \"XXXXXYYY\"\n  }\n]"
+  },
+  {
+    "name": "tashkentskiy_image_prompt_template",
+    "content": "Task: Extract the exact digits displayed on the mechanical water meter image.\nContext:\nPrevious Reading: 01095\nExpected Leading Digits: Based on historical usage, the first 2 or 3 digits on the left are highly likely to be \"01\" or \"010\". Use this context to help resolve dark shadows or ambiguities on the leftmost dials.\nInstructions:\nMeter Structure: The meter displays a row of 8 digits. The first 5 digits on the left have a white/black background (whole cubic meters). The last 3 digits on the right have a red background (fractional cubic meters).\nVisual Extraction: Read the digits strictly from left to right.\nMisaligned Digits: If a digit is misaligned (rolling up or down), report the specific digit that occupies the majority of the viewing window.\nVisual Artifacts: Ignore vertical shadows, reflections, or text printed outside the main digit windows.\nOutput Format:\nReturn ONLY a JSON object strictly in the following format:\n\nJSON\n{\n  \"black_digits\": \"XXXXX\",\n  \"red_digits\": \"YYY\",\n  \"full_reading\": \"XXXXXYYY\"\n}"
+  }
+]

@@ -115,7 +115,7 @@ def main():
                 pb_r = int(prev_readings[4]) if prev_readings and len(prev_readings) > 4 and str(prev_readings[4]).strip().isdigit() else 0
 
                 k_img = os.path.join(img_dir, "kitchen.jpeg")
-                b_img = os.path.join(img_dir, "bacthroom.jpeg")
+                b_img = os.path.join(img_dir, "bathroom.jpeg")
                 
                 kitchen = extract_room_meters(location, "kitchen", k_img, client, profiles, prev_date=prev_date, prev_val=(pk_l, pk_r))
                 bathroom = extract_room_meters(location, "bathroom", b_img, client, profiles, prev_date=prev_date, prev_val=(pb_l, pb_r))

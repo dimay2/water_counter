@@ -1,0 +1,23 @@
+feat: Implement robust GSheet integration and API error handling
+
+This commit introduces a series of enhancements and fixes to the water counter project:
+
+- **GSheet Formula Generation:**
+  - Implemented specific formula generation for Tashkentskiy (Column P: `=SUM(H<row>:O<row>)`) and Rumyantsevo (Column R: `=SUM(B<row>:Q<row>)`).
+  - For other locations, a generic formula replication logic is applied, copying and adjusting formulas from the previous row or leaving the cell empty if no formula is present.
+  - Corrected `target_row` determination in `gsheet_uploader.py` to accurately find the last non-empty row for new data appending, resolving incorrect formula row references.
+
+- **Meter Extraction & Validation:**
+  - Fixed meter reading extraction for Rumyantsevo in `meter_extractor.py` to correctly use `black_digits` (cubic meters) for validation and storage, addressing the "Delta > 20" error.
+  - Added logic to automatically fetch previous meter readings from Google Sheets if `prev_left` or `prev_right` are zero in `data_for_ingestion.json`.
+
+- **Gemini API Interaction:**
+  - Refactored `call_gemini_with_retry` in `gemini_utils.py` for dynamic model selection and demotion upon failure, ensuring subsequent retries use a different, higher-ranked model.
+  - Implemented concise error logging for Gemini API responses, displaying only the error code and status.
+
+- **Dependency & Configuration Updates:**
+  - Updated `profiles.json` to include formula column "P" for Tashkentskiy.
+  - Ensured all function calls across `meter_extractor.py`, `pdf_extractor.py`, and `water_counter_to_sheets.py` align with updated function signatures (e.g., passing `profiles` argument, removing `model_name` from `call_gemini_with_retry`).
+
+- **Removed Complex Font Formatting:**
+  - Removed previous attempts to dynamically fetch and apply font formatting due to complexity and user preference for default styling.

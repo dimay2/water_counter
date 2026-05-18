@@ -46,7 +46,12 @@ def get_last_readings(spreadsheet_id, sheet_gid, meter_idx=None):
                     continue
             return None # Not found
         else:
-            return all_values[-1]
+            # Find the last row with a non-empty date (column 0)
+            for i in range(len(all_values) - 1, -1, -1):
+                row = all_values[i]
+                if row and len(row) > 0 and row[0].strip():
+                    return row
+            return None
     except Exception as e:
         logger.error(f"Error fetching last readings: {e}")
         return None
