@@ -374,10 +374,10 @@ def extract_room_meters(location: str, room: str, img_path: str, client, profile
                     right = deterministic_parse(data.get("meter_2", "0"))
             
         # Validation
-        if prev_val_left > 0 and (left - prev_val_left) > 20:
-            raise ValueError(f"Validation failed for {location}.{room} (Left): New={left}, Previous={prev_val_left}. Delta > 20.")
-        if prev_val_right > 0 and (right - prev_val_right) > 20:
-            raise ValueError(f"Validation failed for {location}.{room} (Right): New={right}, Previous={prev_val_right}. Delta > 20.")
+        if prev_val_left > 0 and (left - prev_val_left) > 30:
+            raise ValueError(f"Validation failed for {location}.{room} (Left): New={left}, Previous={prev_val_left}. Delta > 30.")
+        if prev_val_right > 0 and (right - prev_val_right) > 30:
+            raise ValueError(f"Validation failed for {location}.{room} (Right): New={right}, Previous={prev_val_right}. Delta > 30.")
 
         # Determine refresh status
         should_refresh = not (left > 0 and right > 0)

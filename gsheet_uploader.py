@@ -153,8 +153,8 @@ def update_or_append_gsheet(spreadsheet_id, sheet_gid, location, profile, result
             formula_idx = col_to_idx(formula_col_letter)
             
             if location == "Rumyantsevo":
-                # Specific Rumyantsevo logic: SUM of columns B to Q for the current row
-                data_row[formula_idx] = f"=SUM(B{target_row}:Q{target_row})"
+                # Specific Rumyantsevo logic: SUM of columns H to Q for the current row
+                data_row[formula_idx] = f"=SUM(H{target_row}:Q{target_row})"
                 logger.info(f"Rumyantsevo: Generated formula for column {formula_col_letter}: {data_row[formula_idx]}")
             elif location == "Tashkentskiy":
                 # Specific Tashkentskiy logic: SUM of columns H to O for the current row

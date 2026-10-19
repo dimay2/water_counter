@@ -3,7 +3,7 @@ feat: Implement robust GSheet integration and API error handling
 This commit introduces a series of enhancements and fixes to the water counter project:
 
 - **GSheet Formula Generation:**
-  - Implemented specific formula generation for Tashkentskiy (Column P: `=SUM(H<row>:O<row>)`) and Rumyantsevo (Column R: `=SUM(B<row>:Q<row>)`).
+  - Implemented specific formula generation for Tashkentskiy (Column P: `=SUM(H<row>:O<row>)`) and Rumyantsevo (Column R: `=SUM(H<row>:Q<row>)`).
   - For other locations, a generic formula replication logic is applied, copying and adjusting formulas from the previous row or leaving the cell empty if no formula is present.
   - Corrected `target_row` determination in `gsheet_uploader.py` to accurately find the last non-empty row for new data appending, resolving incorrect formula row references.
 
