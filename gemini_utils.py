@@ -68,39 +68,31 @@ def is_retryable_error(exception: Exception) -> bool:
     return "503" in err_str or "500" in err_str or "502" in err_str or "504" in err_str or "UNAVAILABLE" in err_str or "429" in err_str or "RESOURCE_EXHAUSTED" in err_str
 
 def before_sleep_combined(retry_state):
-    """Callback for tenacity before_sleep that logs and demotes on 429 or repeated 5xx."""
-    
-    exception = retry_state.outcome.exception()
-    if exception:
-        error_message = str(exception)
-        model_name = None
-        if len(retry_state.args) > 1:
-            model_name = retry_state.args[1]
-        elif "model_name" in retry_state.kwargs:
-            model_name = retry_state.kwargs["model_name"]
+    """Callback for tenacity before_sleep that logs error and delay before the next retry attempt."""
+    try:
+        exception = retry_state.outcome.exception()
+        err_msg = str(exception)
+        max_attempts = getattr(getattr(retry_state.retry_object, 'stop', None), 'max_attempt_number', 5)
+        sleep_time = getattr(retry_state.next_action, 'sleep', 0) if retry_state.next_action else 0
+        next_model = get_models()[0] if get_models() else "unknown"
 
-        try:
-            if hasattr(exception, 'response') and hasattr(exception.response, 'text'):
+        reason = err_msg
+        if hasattr(exception, 'response') and hasattr(exception.response, 'text'):
+            try:
                 error_data = json.loads(exception.response.text)
-            else:
-                error_data = json.loads(error_message)
+                if 'error' in error_data and isinstance(error_data['error'], dict):
+                    error_code = error_data['error'].get('code', 'UNKNOWN')
+                    error_status = error_data['error'].get('status', 'UNKNOWN_STATUS')
+                    reason = f"{error_code} {error_status}"
+            except Exception:
+                pass
 
-            if 'error' in error_data and isinstance(error_data['error'], dict):
-                error_code = error_data['error'].get('code', 'UNKNOWN')
-                error_status = error_data['error'].get('status', 'UNKNOWN_STATUS')
-                logger.warning(f"Retrying '{model_name}' due to: {error_code} {error_status}. Attempt {retry_state.attempt_number}/{retry_state.stop_after_attempt.max_attempts}.")
-            else:
-                logger.warning(f"Retrying '{model_name}' due to an error. Attempt {retry_state.attempt_number}/{retry_state.stop_after_attempt.max_attempts}. Error: {error_message}")
-        except json.JSONDecodeError:
-            logger.warning(f"Retrying '{model_name}' due to an error. Attempt {retry_state.attempt_number}/{retry_state.stop_after_attempt.max_attempts}. Error: {error_message}")
-
-        err_str = str(exception)
-        is_429 = "429" in err_str or "RESOURCE_EXHAUSTED" in err_str
-        is_5xx = "503" in err_str or "500" in err_str or "502" in err_str or "504" in err_str or "UNAVAILABLE" in err_str
-        
-        if is_429 or (is_5xx and retry_state.attempt_number >= 4):
-            if model_name:
-                demote_model(model_name)
+        logger.warning(
+            f"Transient API error ({reason}). Retrying in {sleep_time:.1f}s (Attempt {retry_state.attempt_number}/{max_attempts}). "
+            f"Next model to try: '{next_model}'."
+        )
+    except Exception as e:
+        logger.warning(f"Retrying attempt {retry_state.attempt_number} after error: {e}")
 
 @retry(
     wait=wait_exponential(multiplier=8, min=8, max=60),
