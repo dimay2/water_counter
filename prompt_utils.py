@@ -69,9 +69,9 @@ def format_meter_context(label: str, prev_val, max_delta: int = 30) -> str:
 
 
 def build_rumyantsevo_context(prev_val_left, prev_val_right, max_delta: int = 30) -> str:
-    """Format historical context block for the two Rumyantsevo meters (left/upper, right/lower)."""
-    left_line = format_meter_context("Left/upper meter (1st item in array)", prev_val_left, max_delta=max_delta)
-    right_line = format_meter_context("Right/lower meter (2nd item in array)", prev_val_right, max_delta=max_delta)
+    """Format historical context block for the two Rumyantsevo meters (leftmost, rightmost)."""
+    left_line = format_meter_context("Leftmost meter (1st item in array)", prev_val_left, max_delta=max_delta)
+    right_line = format_meter_context("Rightmost meter (2nd item in array)", prev_val_right, max_delta=max_delta)
     return (
         f"{left_line}\n"
         f"{right_line}\n"

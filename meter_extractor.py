@@ -2,7 +2,7 @@ import os
 import json
 import logging
 from datetime import datetime
-from PIL import Image
+from PIL import Image, ImageOps
 from pydantic import BaseModel
 from pdf_extractor import parse_rumyantsevo_pdf, parse_tashkentskiy_pdf
 from gemini_utils import call_gemini_with_retry, get_last_used_model, load_models
@@ -45,11 +45,7 @@ def load_ingestion_data():
 def process_location(location: str, client, profiles):
     ingestion_data = load_ingestion_data()
     pdf_dir = os.path.join('Input_data', location)
-    
-    global _CACHED_MODELS_TO_TRY
-    if _CACHED_MODELS_TO_TRY is None:
-        _CACHED_MODELS_TO_TRY = load_cached_models()
-    model_name = _CACHED_MODELS_TO_TRY[0]
+    model_name = load_models("pdf")[0]
 
     if os.path.exists(pdf_dir):
         loc_data = ingestion_data.setdefault(location, {})
@@ -222,7 +218,7 @@ def extract_room_meters(location: str, room: str, img_path: str, client, profile
     if _CACHED_MODELS_TO_TRY is None:
         _CACHED_MODELS_TO_TRY = load_cached_models()
     model_name = _CACHED_MODELS_TO_TRY[0]
-    img = Image.open(img_path)
+    img = ImageOps.exif_transpose(Image.open(img_path))
     
     # Log annotation context
     logger.info(f"Temporal Annotation Input -> Date: {prev_date}, Value: {prev_val}")
@@ -292,6 +288,7 @@ def extract_room_meters(location: str, room: str, img_path: str, client, profile
                 prompt,
                 context_info=f"{location}.{room} (attempt {attempt}/{MAX_VALIDATION_ATTEMPTS})",
                 excluded_models=excluded_models,
+                task_type="ocr",
             )
             logger.info(f"Raw Gemini API Response: {response.text}")
             data = json.loads(response.text)
