@@ -14,7 +14,23 @@ logging.getLogger("httpx").setLevel(logging.WARNING)
 logger = logging.getLogger(__name__)
 
 MODELS_CACHE_FILE = 'working_models.json'
+DEFAULT_MODELS = [
+    "gemini-4-hydrogen",
+    "gemini-3.8-flash",
+    "gemini-3.7-flash",
+    "gemini-3.6-flash",
+    "gemini-3.5-flash",
+    "gemini-3-flash-preview",
+    "gemini-4-argon",
+    "gemini-3.1-pro-preview",
+    "gemini-3.1-pro-preview-customtools",
+    "gemini-4-carbon",
+    "gemini-3.5-flash-lite",
+    "gemini-3.1-flash-lite",
+    "gemini-3.1-flash-lite-preview",
+]
 _MODELS_LIST_CACHE = None
+_LAST_USED_MODEL = None
 
 def load_models():
     if os.path.exists(MODELS_CACHE_FILE):
@@ -25,7 +41,22 @@ def load_models():
                     return models
         except Exception as e:
             logger.warning(f"Could not read {MODELS_CACHE_FILE}: {e}")
-    return []
+    return list(DEFAULT_MODELS)
+
+def select_model(excluded_models=None):
+    """Return the highest-priority available model not in excluded_models."""
+    models = get_models()
+    if not models:
+        models = list(DEFAULT_MODELS)
+    if excluded_models:
+        for m in models:
+            if m not in excluded_models:
+                return m
+    return models[0]
+
+def get_last_used_model():
+    """Return the model name used in the most recent call_gemini_with_retry invocation."""
+    return _LAST_USED_MODEL
 
 def get_models():
     global _MODELS_LIST_CACHE
@@ -100,25 +131,44 @@ def before_sleep_combined(retry_state):
     retry=retry_if_exception(is_retryable_error),
     before_sleep=before_sleep_combined
 )
-def call_gemini_with_retry(client, contents, prompt, context_info="", response_schema=None, response_mime_type="application/json"):
-    # Get the current best model for this attempt
-    model_name = get_models()[0] # Always try the first model in the list
+def call_gemini_with_retry(
+    client,
+    contents,
+    prompt,
+    context_info="",
+    response_schema=None,
+    response_mime_type="application/json",
+    excluded_models=None,
+    media_resolution=None,
+):
+    # Get the current best non-excluded model for this attempt
+    global _LAST_USED_MODEL
+    model_name = select_model(excluded_models)
+    _LAST_USED_MODEL = model_name
 
     logger.info(f"Sending request to model: '{model_name}' | Context: {context_info}")
     logger.info(f"Full prompt sent to Gemini:\n{prompt}")
-    
-    config = types.GenerateContentConfig(
-        response_mime_type=response_mime_type,
-        temperature=0.0
-    )
+
+    is_image = hasattr(contents, 'width') and hasattr(contents, 'height')
+    if media_resolution is None and is_image:
+        media_resolution = types.MediaResolution.MEDIA_RESOLUTION_HIGH
+
+    config_kwargs = {
+        "response_mime_type": response_mime_type,
+        "temperature": 0.0,
+    }
     if response_schema:
-        config.response_schema = response_schema
-        
+        config_kwargs["response_schema"] = response_schema
+    if media_resolution is not None:
+        config_kwargs["media_resolution"] = media_resolution
+
+    config = types.GenerateContentConfig(**config_kwargs)
+
     file_upload = None
     try:
         actual_contents = []
 
-        if hasattr(contents, 'width') and hasattr(contents, 'height'):  # Duck typing for PIL Image
+        if is_image:  # Duck typing for PIL Image
             # Save the PIL Image to a temporary BytesIO object
             byte_arr = io.BytesIO()
             contents.save(byte_arr, format='PNG')
