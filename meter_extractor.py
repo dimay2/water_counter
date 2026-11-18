@@ -5,8 +5,8 @@ from datetime import datetime
 from PIL import Image
 from pydantic import BaseModel
 from pdf_extractor import parse_rumyantsevo_pdf, parse_tashkentskiy_pdf
-from gemini_utils import call_gemini_with_retry
-from prompt_utils import load_prompts
+from gemini_utils import call_gemini_with_retry, get_last_used_model, load_models
+from prompt_utils import load_prompts, build_rumyantsevo_context, build_tashkentskiy_context
 import gsheet_uploader
 
 # Configure logging
@@ -14,6 +14,8 @@ logger = logging.getLogger(__name__)
 
 MODELS_CACHE_FILE = 'working_models.json'
 DATA_INGESTION_FILE = 'data_for_ingestion.json'
+MAX_MONTHLY_DELTA = 30
+MAX_VALIDATION_ATTEMPTS = 3
 
 class MeterReadings(BaseModel):
     meter_1: str
@@ -22,15 +24,7 @@ class MeterReadings(BaseModel):
 _CACHED_MODELS_TO_TRY = None
 
 def load_cached_models():
-    if os.path.exists(MODELS_CACHE_FILE):
-        try:
-            with open(MODELS_CACHE_FILE, 'r') as f:
-                models = json.load(f)
-                if isinstance(models, list) and len(models) > 0:
-                    return models
-        except Exception as e:
-            logger.warning(f"Could not read {MODELS_CACHE_FILE}: {e}")
-    return []
+    return load_models()
 
 def save_ingestion_data(data):
     try:
@@ -246,19 +240,26 @@ def extract_room_meters(location: str, room: str, img_path: str, client, profile
     if location == "Tashkentskiy":
         prompt_template = prompts.get("tashkentskiy_image_prompt_template", "")
         if prompt_template:
-            try:
-                # Format with leading zeros to 5 digits for the prompt
-                prev_val_str = f"{int(float(prev_val_left if logic == 'color_coded' and 'red' in img_path.lower() else prev_val_right)):05d}"
-                # Derive leading 2 or 3 digits (take first 2 or 3)
-                leading_digits = f"{prev_val_str[:2]}\" or \"{prev_val_str[:3]}"
-                prompt = prompt_template.replace("01095", prev_val_str).replace("01\" or \"010", leading_digits)
-            except Exception as e:
-                logger.error(f"Error formatting prompt: {e}")
-                prompt = prompt_template
+            target_prev = prev_val_left if logic == 'color_coded' and 'red' in img_path.lower() else prev_val_right
+            context_block = build_tashkentskiy_context(target_prev, max_delta=MAX_MONTHLY_DELTA)
+            prompt = (
+                prompt_template.replace("{context_block}", context_block)
+                if "{context_block}" in prompt_template
+                else f"{prompt_template}\n\nContext:\n{context_block}"
+            )
         else:
             prompt = ""
     elif location == "Rumyantsevo":
-        prompt = prompts.get("rumyantsevo_image_prompt_template", "")
+        prompt_template = prompts.get("rumyantsevo_image_prompt_template", "")
+        if prompt_template:
+            context_block = build_rumyantsevo_context(prev_val_left, prev_val_right, max_delta=MAX_MONTHLY_DELTA)
+            prompt = (
+                prompt_template.replace("{context_block}", context_block)
+                if "{context_block}" in prompt_template
+                else f"{prompt_template}\n\nContext:\n{context_block}"
+            )
+        else:
+            prompt = ""
     else:
         prompt_template = prompts.get("meter_extraction_temporal_prompt", "")
         if prompt_template:
@@ -280,104 +281,35 @@ def extract_room_meters(location: str, room: str, img_path: str, client, profile
         logger.error(f"Could not find prompt for location {location}")
         return {"left": 0, "right": 0}
 
-    def deterministic_parse(val_str):
-        if not val_str:
-            return 0
-        # Keep only digits
-        digits = "".join(filter(str.isdigit, str(val_str)))
-        if not digits:
-            return 0
-        # Convert to int (leading zeros are handled by int())
-        return int(digits)
-
     try:
-        response = call_gemini_with_retry(client, img, prompt)
-        logger.info(f"Raw Gemini API Response: {response.text}")
-        data = json.loads(response.text)
-        
-        is_new_format = False
-        if isinstance(data, list) and len(data) > 0 and isinstance(data[0], dict) and "black_digits" in data[0]:
-            is_new_format = True
-        elif isinstance(data, dict) and "black_digits" in data:
-            is_new_format = True
+        excluded_models = set()
+        left, right, color = 0, 0, None
 
-        if is_new_format:
-            if logic == "color_coded":
-                # Tashkentskiy
-                res_dict = data[0] if isinstance(data, list) else data
-                reading_str = res_dict.get("black_digits", "0")
-                color = res_dict.get("color", res_dict.get("Color"))
-                if not color:
-                    color = "Red" if "red" in img_path.lower() else "Blue"
-                val_int = deterministic_parse(reading_str)
-                logger.info(f"Extracted {color} meter: black_digits={reading_str}, parsed_val={val_int}")
-                
-                prev_val = prev_val_left if color == "Red" else prev_val_right
-                if color == "Red":
-                    left, right = val_int, 0
-                else:
-                    left, right = 0, val_int
-            else:
-                # Rumyantsevo
-                if isinstance(data, list):
-                    left = deterministic_parse(data[0].get("black_digits", "0")) if len(data) >= 1 else 0
-                    right = deterministic_parse(data[1].get("black_digits", "0")) if len(data) >= 2 else 0
-                else:
-                    left = deterministic_parse(data.get("black_digits", "0"))
-                    right = 0
-        else:
-            # Old logic
-            # Parse 'FinalResult' which may be an object or a list
-            raw_data = data
-            if isinstance(data, list):
-                data = data[0]
-            final_result = data.get("FinalResult", data.get("final_result", data.get("meter_reading", "0")))
-            
-            if logic == "color_coded":
-                # Extract color from response or filename
-                color = data.get("color", data.get("Color"))
-                if not color:
-                    color = "Red" if "red" in img_path.lower() else "Blue"
+        for attempt in range(1, MAX_VALIDATION_ATTEMPTS + 1):
+            response = call_gemini_with_retry(
+                client,
+                img,
+                prompt,
+                context_info=f"{location}.{room} (attempt {attempt}/{MAX_VALIDATION_ATTEMPTS})",
+                excluded_models=excluded_models,
+            )
+            logger.info(f"Raw Gemini API Response: {response.text}")
+            data = json.loads(response.text)
+            left, right, color = _parse_meter_payload(data, logic, img_path)
 
-                # For color coded, FinalResult is often a string or object.
-                # Handle potential object with Left/Right keys
-                if isinstance(final_result, dict):
-                    full_reading = final_result.get("LeftMeter", "0") if color == "Red" else final_result.get("RightMeter", "0")
+            try:
+                _validate_meter_readings(
+                    location, room, logic, color, left, right, prev_val_left, prev_val_right
+                )
+                break
+            except ValueError as ve:
+                used_model = get_last_used_model()
+                if used_model:
+                    excluded_models.add(used_model)
+                if attempt < MAX_VALIDATION_ATTEMPTS:
+                    logger.warning(f"{ve} Escalating to next model after '{used_model}'.")
                 else:
-                    full_reading = str(final_result)
-                
-                val_int = deterministic_parse(full_reading)
-                logger.info(f"Extracted {color} meter: full={full_reading}, parsed_val={val_int}")
-                
-                # Validation logic based on color
-                prev_val = prev_val_left if color == "Red" else prev_val_right
-                
-                # Assign correctly: Red=Left, Blue=Right
-                if color == "Red":
-                    left, right = val_int, 0
-                elif color == "Blue":
-                    left, right = 0, val_int
-                else:
-                    left, right = 0, 0
-            else:
-                # Handle Rumyantsevo (list or dict of meter results)
-                if isinstance(final_result, list):
-                    # Assuming first is left, second is right
-                    left = deterministic_parse(final_result[0] if len(final_result) >= 1 else "0")
-                    right = deterministic_parse(final_result[1] if len(final_result) >= 2 else "0")
-                elif isinstance(final_result, dict):
-                    left = deterministic_parse(final_result.get("LeftMeter", final_result.get("meter_1", "0")))
-                    right = deterministic_parse(final_result.get("RightMeter", final_result.get("meter_2", "0")))
-                else:
-                    # Fallback to older format if needed
-                    left = deterministic_parse(data.get("meter_1", "0"))
-                    right = deterministic_parse(data.get("meter_2", "0"))
-            
-        # Validation
-        if prev_val_left > 0 and (left - prev_val_left) > 30:
-            raise ValueError(f"Validation failed for {location}.{room} (Left): New={left}, Previous={prev_val_left}. Delta > 30.")
-        if prev_val_right > 0 and (right - prev_val_right) > 30:
-            raise ValueError(f"Validation failed for {location}.{room} (Right): New={right}, Previous={prev_val_right}. Delta > 30.")
+                    raise
 
         # Determine refresh status
         should_refresh = not (left > 0 and right > 0)
@@ -411,3 +343,99 @@ def extract_room_meters(location: str, room: str, img_path: str, client, profile
         if isinstance(e, ValueError) and "Validation failed" in str(e):
             raise # Re-raise validation errors
         return {"left": 0, "right": 0}
+
+
+def _deterministic_parse(val_str) -> int:
+    """Keep only digits from raw meter text and parse as integer (stripping leading zeros)."""
+    if not val_str:
+        return 0
+    digits = "".join(filter(str.isdigit, str(val_str)))
+    return int(digits) if digits else 0
+
+
+def _parse_meter_payload(data, logic: str, img_path: str) -> tuple[int, int, str | None]:
+    """Parse Gemini JSON response payload into (left, right, color)."""
+    is_new_format = (
+        (isinstance(data, list) and len(data) > 0 and isinstance(data[0], dict) and "black_digits" in data[0])
+        or (isinstance(data, dict) and "black_digits" in data)
+    )
+
+    color = None
+    if is_new_format:
+        if logic == "color_coded":
+            res_dict = data[0] if isinstance(data, list) else data
+            reading_str = res_dict.get("black_digits", "0")
+            color = res_dict.get("color", res_dict.get("Color")) or ("Red" if "red" in img_path.lower() else "Blue")
+            val_int = _deterministic_parse(reading_str)
+            logger.info(f"Extracted {color} meter: black_digits={reading_str}, parsed_val={val_int}")
+            return (val_int, 0, color) if color == "Red" else (0, val_int, color)
+
+        if isinstance(data, list):
+            left = _deterministic_parse(data[0].get("black_digits", "0")) if len(data) >= 1 else 0
+            right = _deterministic_parse(data[1].get("black_digits", "0")) if len(data) >= 2 else 0
+            return left, right, None
+        return _deterministic_parse(data.get("black_digits", "0")), 0, None
+
+    # Legacy payload format fallback
+    entry = data[0] if isinstance(data, list) else data
+    final_result = entry.get("FinalResult", entry.get("final_result", entry.get("meter_reading", "0")))
+
+    if logic == "color_coded":
+        color = entry.get("color", entry.get("Color")) or ("Red" if "red" in img_path.lower() else "Blue")
+        if isinstance(final_result, dict):
+            full_reading = final_result.get("LeftMeter", "0") if color == "Red" else final_result.get("RightMeter", "0")
+        else:
+            full_reading = str(final_result)
+        val_int = _deterministic_parse(full_reading)
+        logger.info(f"Extracted {color} meter: full={full_reading}, parsed_val={val_int}")
+        if color == "Red":
+            return val_int, 0, color
+        if color == "Blue":
+            return 0, val_int, color
+        return 0, 0, color
+
+    if isinstance(final_result, list):
+        left = _deterministic_parse(final_result[0] if len(final_result) >= 1 else "0")
+        right = _deterministic_parse(final_result[1] if len(final_result) >= 2 else "0")
+        return left, right, None
+    if isinstance(final_result, dict):
+        left = _deterministic_parse(final_result.get("LeftMeter", final_result.get("meter_1", "0")))
+        right = _deterministic_parse(final_result.get("RightMeter", final_result.get("meter_2", "0")))
+        return left, right, None
+    return _deterministic_parse(entry.get("meter_1", "0")), _deterministic_parse(entry.get("meter_2", "0")), None
+
+
+def _validate_meter_readings(
+    location: str,
+    room: str,
+    logic: str,
+    color: str | None,
+    left: int,
+    right: int,
+    prev_val_left: int,
+    prev_val_right: int,
+    max_delta: int = MAX_MONTHLY_DELTA,
+) -> None:
+    """Raise ValueError if extracted readings violate monotonicity or monthly consumption bounds."""
+    checks = []
+    if logic == "color_coded":
+        if color == "Red":
+            checks.append(("Left", left, prev_val_left))
+        elif color == "Blue":
+            checks.append(("Right", right, prev_val_right))
+    else:
+        checks.extend([("Left", left, prev_val_left), ("Right", right, prev_val_right)])
+
+    for side, new_val, prev_val in checks:
+        if prev_val <= 0:
+            continue
+        if new_val == 0:
+            raise ValueError(f"Validation failed for {location}.{room} ({side}): New=0, Previous={prev_val}.")
+        if (new_val - prev_val) > max_delta:
+            raise ValueError(
+                f"Validation failed for {location}.{room} ({side}): New={new_val}, Previous={prev_val}. Delta > {max_delta}."
+            )
+        if new_val < prev_val and prev_val < 99970:
+            raise ValueError(
+                f"Validation failed for {location}.{room} ({side}): New={new_val} < Previous={prev_val}."
+            )
