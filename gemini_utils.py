@@ -14,7 +14,7 @@ logging.getLogger("httpx").setLevel(logging.WARNING)
 logger = logging.getLogger(__name__)
 
 MODELS_CACHE_FILE = 'working_models.json'
-DEFAULT_MODELS = [
+DEFAULT_OCR_MODELS = [
     "gemini-4-hydrogen",
     "gemini-3.8-flash",
     "gemini-3.7-flash",
@@ -29,25 +29,58 @@ DEFAULT_MODELS = [
     "gemini-3.1-flash-lite",
     "gemini-3.1-flash-lite-preview",
 ]
+DEFAULT_PDF_MODELS = [
+    "gemini-3.5-flash-lite",
+    "gemini-3.1-flash-lite",
+    "gemini-3.8-flash",
+    "gemini-3.5-flash",
+    "gemini-3.7-flash",
+    "gemini-3.6-flash",
+    "gemini-3.1-flash-lite-preview",
+    "gemini-3-flash-preview",
+    "gemini-4-hydrogen",
+    "gemini-4-argon",
+    "gemini-3.1-pro-preview",
+    "gemini-3.1-pro-preview-customtools",
+    "gemini-4-carbon",
+]
+DEFAULT_MODELS = {
+    "ocr": DEFAULT_OCR_MODELS,
+    "pdf": DEFAULT_PDF_MODELS,
+}
 _MODELS_LIST_CACHE = None
 _LAST_USED_MODEL = None
 
-def load_models():
+def _load_models_store() -> dict[str, list[str]]:
+    """Load the per-task model priority map from disk, normalizing legacy list files."""
+    store = {
+        "ocr": list(DEFAULT_OCR_MODELS),
+        "pdf": list(DEFAULT_PDF_MODELS),
+    }
     if os.path.exists(MODELS_CACHE_FILE):
         try:
-            with open(MODELS_CACHE_FILE, 'r') as f:
-                models = json.load(f)
-                if isinstance(models, list) and len(models) > 0:
-                    return models
+            with open(MODELS_CACHE_FILE, 'r', encoding='utf-8') as f:
+                raw = json.load(f)
+                if isinstance(raw, dict):
+                    for key in ("ocr", "pdf"):
+                        if isinstance(raw.get(key), list) and len(raw[key]) > 0:
+                            store[key] = list(raw[key])
+                elif isinstance(raw, list) and len(raw) > 0:
+                    store["ocr"] = list(raw)
         except Exception as e:
             logger.warning(f"Could not read {MODELS_CACHE_FILE}: {e}")
-    return list(DEFAULT_MODELS)
+    return store
 
-def select_model(excluded_models=None):
-    """Return the highest-priority available model not in excluded_models."""
-    models = get_models()
+def load_models(task_type: str = "ocr") -> list[str]:
+    """Return the ordered model list for the given task_type ('ocr' or 'pdf')."""
+    store = _load_models_store()
+    return list(store.get(task_type, store["ocr"]))
+
+def select_model(excluded_models=None, task_type: str = "ocr") -> str:
+    """Return the highest-priority available model for task_type not in excluded_models."""
+    models = get_models(task_type=task_type)
     if not models:
-        models = list(DEFAULT_MODELS)
+        models = list(DEFAULT_MODELS.get(task_type, DEFAULT_OCR_MODELS))
     if excluded_models:
         for m in models:
             if m not in excluded_models:
@@ -58,41 +91,48 @@ def get_last_used_model():
     """Return the model name used in the most recent call_gemini_with_retry invocation."""
     return _LAST_USED_MODEL
 
-def get_models():
+def get_models(task_type: str = "ocr") -> list[str]:
     global _MODELS_LIST_CACHE
     if _MODELS_LIST_CACHE is None:
-        _MODELS_LIST_CACHE = load_models()
-    return _MODELS_LIST_CACHE
+        _MODELS_LIST_CACHE = _load_models_store()
+    return _MODELS_LIST_CACHE.get(task_type, _MODELS_LIST_CACHE["ocr"])
 
-def save_models(models):
+def save_models(models, task_type: str | None = None):
     try:
-        with open(MODELS_CACHE_FILE, 'w') as f:
-            json.dump(models, f, indent=4)
+        if isinstance(models, dict):
+            payload = models
+        elif task_type is not None:
+            payload = _load_models_store()
+            payload[task_type] = list(models)
+        else:
+            payload = models
+        with open(MODELS_CACHE_FILE, 'w', encoding='utf-8') as f:
+            json.dump(payload, f, indent=4)
     except Exception as e:
         logger.error(f"Could not write {MODELS_CACHE_FILE}: {e}")
 
-def demote_model(model_name):
-    models = load_models() # Always load from file to be sure
+def demote_model(model_name: str, task_type: str = "ocr"):
+    store = _load_models_store()
+    models = store.get(task_type, store["ocr"])
     if not models or model_name not in models:
         return
-    
+
     idx = models.index(model_name)
     models.pop(idx)
-    
+
     # Put lower this model to random [2..10] places down
     shift = random.randint(2, 10)
-    new_idx = idx + shift
-    if new_idx > len(models):
-        new_idx = len(models)
-        
+    new_idx = min(idx + shift, len(models))
+
     models.insert(new_idx, model_name)
-    save_models(models)
-    
+    store[task_type] = models
+    save_models(store)
+
     # Update global cache
     global _MODELS_LIST_CACHE
-    _MODELS_LIST_CACHE = models
-    
-    logger.info(f"Demoted model '{model_name}' from index {idx} to {new_idx} (shifted by {shift})")
+    _MODELS_LIST_CACHE = store
+
+    logger.info(f"Demoted [{task_type}] model '{model_name}' from index {idx} to {new_idx} (shifted by {shift})")
 
 def is_retryable_error(exception: Exception) -> bool:
     err_str = str(exception)
@@ -105,7 +145,9 @@ def before_sleep_combined(retry_state):
         err_msg = str(exception)
         max_attempts = getattr(getattr(retry_state.retry_object, 'stop', None), 'max_attempt_number', 5)
         sleep_time = getattr(retry_state.next_action, 'sleep', 0) if retry_state.next_action else 0
-        next_model = get_models()[0] if get_models() else "unknown"
+        task_type = retry_state.kwargs.get("task_type", "ocr")
+        excluded = retry_state.kwargs.get("excluded_models")
+        next_model = select_model(excluded_models=excluded, task_type=task_type)
 
         reason = err_msg
         if hasattr(exception, 'response') and hasattr(exception.response, 'text'):
@@ -140,13 +182,14 @@ def call_gemini_with_retry(
     response_mime_type="application/json",
     excluded_models=None,
     media_resolution=None,
+    task_type="ocr",
 ):
     # Get the current best non-excluded model for this attempt
     global _LAST_USED_MODEL
-    model_name = select_model(excluded_models)
+    model_name = select_model(excluded_models, task_type=task_type)
     _LAST_USED_MODEL = model_name
 
-    logger.info(f"Sending request to model: '{model_name}' | Context: {context_info}")
+    logger.info(f"Sending request to model: '{model_name}' [{task_type}] | Context: {context_info}")
     logger.info(f"Full prompt sent to Gemini:\n{prompt}")
 
     is_image = hasattr(contents, 'width') and hasattr(contents, 'height')
@@ -210,7 +253,7 @@ def call_gemini_with_retry(
             logger.error(f"Request to '{model_name}' failed: {error_message}")
         
         # Demote the model that just failed
-        demote_model(model_name)
+        demote_model(model_name, task_type=task_type)
         raise e
     finally:
         if file_upload:
